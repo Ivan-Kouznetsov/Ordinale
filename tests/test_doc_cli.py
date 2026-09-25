@@ -22,6 +22,8 @@ def test_cli_help(capsys):
     assert "--workers" in captured.out
     assert "--sequential" in captured.out
     assert "--no-preserve-folders" in captured.out
+    assert "--config" in captured.out
+    assert "--extensions" in captured.out
 
 
 @patch("ordinale.doc_organizer.DocumentClassifier")
@@ -61,4 +63,24 @@ def test_cli_sequential_and_no_preserve_folders(mock_run_scan, mock_classifier):
     _, kwargs = mock_run_scan.call_args
     assert kwargs["max_workers"] == 1
     assert kwargs["preserve_folders"] is False
+
+
+@patch("ordinale.doc_organizer.DocumentClassifier")
+@patch("ordinale.doc_organizer.run_scan_and_organize")
+def test_cli_config_and_extensions(mock_run_scan, mock_classifier, tmp_path: Path):
+    cfg_file = tmp_path / "ordinale.json"
+    cfg_file.write_text('{"scanner": {"extensions": [".pdf"]}}', encoding="utf-8")
+
+    with patch("sys.argv", [
+        "doc_organizer.py",
+        "--scan", "my_folder",
+        "--config", str(cfg_file),
+        "--extensions", ".pdf,.docx",
+    ]):
+        main()
+
+    assert mock_run_scan.called
+    engine_arg = mock_run_scan.call_args[1]["engine"]
+    assert engine_arg.settings.scanner.extensions == [".pdf", ".docx"]
+
 

@@ -45,6 +45,9 @@ doc-organizer = "ordinale.doc_organizer:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+ordinale = ["*.toml", "*.json"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

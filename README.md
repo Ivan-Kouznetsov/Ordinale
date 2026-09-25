@@ -185,6 +185,8 @@ Once installed, you can invoke the CLI using `ordinale`, `doc-organizer`, or `py
 | `--no-recursive` | *None* | Only scan the top-level directory, ignoring subdirectories. |
 | `--no-preserve-folders` | *None* | Do not preserve relative source subdirectories under destination categories. |
 | `--offline` | *None* | Strictly use locally cached Hugging Face model weights without network checks. |
+| `--config` | `<PATH>` | Path to a custom settings file (`.toml` or `.json`). |
+| `--extensions` | `<EXTS>` | Comma-separated list of extensions to scan (e.g. `.pdf,.docx,.txt`). |
 
 ---
 
@@ -222,7 +224,47 @@ ordinale --target "C:/Users/username/Documents/Organized" --undo
 ```
 Ordinale reads `.organizer_manifest.json`, verifies file hashes, moves every file back to its original location, and updates the manifest.
 
-#### 5. Fast Parallel Processing on Large Collections
+#### 5. Custom File Extensions & Settings File
+By default, Ordinale scans `.docx`, `.pdf`, `.html`, `.htm`, `.mhtml`, `.txt`, `.md`, `.markdown`, and `.rtf`.
+
+You can customize which extensions to scan and map custom file types using a settings file (`ordinale.toml` or `ordinale.json`) in your project or home directory:
+
+**`ordinale.toml`**:
+```toml
+[scanner]
+# Only look for PDF and Word documents
+extensions = [".pdf", ".docx"]
+
+[scanner.custom_types]
+# Map custom extensions to text/markdown extractors
+".rst" = "markdown"
+".log" = "text"
+```
+
+**`ordinale.json`**:
+```json
+{
+  "scanner": {
+    "extensions": [".pdf", ".docx"],
+    "custom_types": {
+      ".rst": "markdown",
+      ".log": "text"
+    }
+  }
+}
+```
+
+Or pass a settings file explicitly:
+```bash
+ordinale --scan "./my_docs" --config "./my_settings.toml"
+```
+
+Or override scanned extensions directly on the command line:
+```bash
+ordinale --scan "./my_docs" --extensions .pdf,.docx
+```
+
+#### 6. Fast Parallel Processing on Large Collections
 Tune the concurrency worker threads for multi-core CPUs:
 ```bash
 ordinale --scan "/path/to/archive" --target "/path/to/target" --workers 8 --execute
