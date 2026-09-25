@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import warnings
 
 # Disable symlinks on Windows to prevent WinError 1314 when running without Admin/Developer mode
@@ -308,6 +308,120 @@ def autodetect_device() -> str:
     return "cpu"
 
 
+DEFAULT_MODEL_ID: str = "convaiinnovations/laya"
+
+
+def resolve_cached_model_path(
+    repo_id_or_path: str = DEFAULT_MODEL_ID,
+    subfolder: Optional[str] = None,
+) -> Optional[str]:
+    """Resolves the local cached directory path for a model if completely cached.
+
+    Args:
+        repo_id_or_path: Hugging Face repo ID or local directory path.
+        subfolder: Optional subfolder within the repository.
+
+    Returns:
+        Local directory path as string if cached, None otherwise.
+    """
+    if not repo_id_or_path:
+        return None
+
+    # 1. Local directory check
+    target_path = Path(repo_id_or_path)
+    if target_path.exists() and target_path.is_dir():
+        if subfolder:
+            target_path = target_path / subfolder
+            if not target_path.is_dir():
+                return None
+        cfg_file = target_path / "rl_agent_config.json"
+        weights_file = target_path / "model.safetensors"
+        if cfg_file.is_file() and weights_file.is_file():
+            return str(target_path)
+        return None
+
+    # 2. Hugging Face Hub local cache inspection (silent, zero network/progress bar overhead)
+    try:
+        from huggingface_hub import try_to_load_from_cache
+
+        cfg_filename = f"{subfolder}/rl_agent_config.json" if subfolder else "rl_agent_config.json"
+        weights_filename = f"{subfolder}/model.safetensors" if subfolder else "model.safetensors"
+
+        cfg_path = try_to_load_from_cache(repo_id_or_path, cfg_filename)
+        weights_path = try_to_load_from_cache(repo_id_or_path, weights_filename)
+
+        if (
+            cfg_path
+            and isinstance(cfg_path, str)
+            and os.path.isfile(cfg_path)
+            and weights_path
+            and isinstance(weights_path, str)
+            and os.path.isfile(weights_path)
+        ):
+            if subfolder:
+                return os.path.dirname(os.path.dirname(cfg_path))
+            return os.path.dirname(cfg_path)
+    except Exception:
+        pass
+    return None
+
+
+def is_model_cached(
+    repo_id_or_path: str = DEFAULT_MODEL_ID,
+    subfolder: Optional[str] = None,
+) -> bool:
+    """Checks whether the specified model checkpoint is already completely cached locally.
+
+    Args:
+        repo_id_or_path: Hugging Face repo ID or local directory path.
+        subfolder: Optional subfolder within the repository.
+
+    Returns:
+        True if all required model files are present locally, False otherwise.
+    """
+    return resolve_cached_model_path(repo_id_or_path, subfolder=subfolder) is not None
+
+
+def configure_offline_mode(
+    repo_id_or_path: str = DEFAULT_MODEL_ID,
+    subfolder: Optional[str] = None,
+    offline: Optional[Union[bool, str]] = "auto",
+) -> bool:
+    """Configures environment variables for offline mode if cached or explicitly requested.
+
+    Args:
+        repo_id_or_path: Hugging Face repo ID or local path.
+        subfolder: Optional subfolder.
+        offline: True (force offline), False (force online), or 'auto' (detect if cached).
+
+    Returns:
+        True if offline mode was enabled, False if online mode will be used.
+    """
+    should_be_offline: bool
+
+    if isinstance(offline, str):
+        offline_val = offline.strip().lower()
+        if offline_val in ("1", "true", "yes", "on"):
+            should_be_offline = True
+        elif offline_val in ("0", "false", "no", "off"):
+            should_be_offline = False
+        else:  # "auto" or unrecognized
+            should_be_offline = is_model_cached(repo_id_or_path, subfolder=subfolder)
+    elif isinstance(offline, bool):
+        should_be_offline = offline
+    else:
+        should_be_offline = is_model_cached(repo_id_or_path, subfolder=subfolder)
+
+    if should_be_offline:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        return True
+    else:
+        os.environ.pop("HF_HUB_OFFLINE", None)
+        os.environ.pop("TRANSFORMERS_OFFLINE", None)
+        return False
+
+
 class DocumentClassifier:
     """Evaluates documents using Laya's typed question engine."""
 
@@ -316,8 +430,12 @@ class DocumentClassifier:
         subfolder: Optional[str] = None,
         device: Optional[str] = None,
         confidence_threshold: float = 0.55,
+        offline: Optional[Union[bool, str]] = "auto",
+        model_id: str = DEFAULT_MODEL_ID,
     ) -> None:
         self.subfolder = subfolder
+        self.model_id = model_id
+        self.offline = offline
         self._explicit_device = device is not None and str(device).lower() != "auto"
         if not self._explicit_device:
             self.device = autodetect_device()
@@ -331,6 +449,13 @@ class DocumentClassifier:
         """Loads and pre-warms the Laya decision model."""
         import laya
         import torch
+
+        # Automatically configure offline mode if cached, unless overridden
+        configure_offline_mode(
+            repo_id_or_path=self.model_id,
+            subfolder=self.subfolder,
+            offline=self.offline,
+        )
 
         # If CUDA is explicitly requested, strictly validate CUDA without falling back to CPU
         if self._explicit_device and self.device is not None and "cuda" in str(self.device).lower():
@@ -355,7 +480,13 @@ class DocumentClassifier:
         if self.device is not None:
             load_kwargs["device"] = self.device
 
-        self._agent = laya.load("convaiinnovations/laya", **load_kwargs)
+        model_target = self.model_id
+        if os.environ.get("HF_HUB_OFFLINE") == "1":
+            cached_dir = resolve_cached_model_path(self.model_id, subfolder=self.subfolder)
+            if cached_dir:
+                model_target = cached_dir
+
+        self._agent = laya.load(model_target, **load_kwargs)
 
         # Ensure Laya did not silently downgrade to CPU during initialization
         if self.device is not None and "cuda" in str(self.device).lower():

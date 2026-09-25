@@ -10,7 +10,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
-from typing import List, Optional
+from typing import List, Optional, Union
 import warnings
 
 # Suppress known upstream Laya checkpoint temperature calibration warning
@@ -34,8 +34,12 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
 
-from ordinale.config import load_settings, normalize_extension
-from ordinale.doc_classifier import CudaDeviceError, DocumentClassifier
+from ordinale.config import load_settings
+from ordinale.doc_classifier import (
+    CudaDeviceError,
+    DocumentClassifier,
+    is_model_cached,
+)
 from ordinale.extractor import DocumentTextExtractor
 from ordinale.organizer_engine import OrganizerEngine, OrganizationPlan
 
@@ -129,8 +133,7 @@ def display_benchmark_samples(classifier: DocumentClassifier, samples_file: Path
         Panel(
             f"[bold]Total Documents Tested:[/] {len(samples)}  |  "
             f"[bold]Category Accuracy:[/] [green]{accuracy:.1f}%[/green] ({correct_matches}/{len(samples)})  |  "
-            f"[bold]Avg Latency:[/] [cyan]{avg_latency:.1f} ms/doc[/cyan]  |  "
-            f"[bold]Cost:[/] [green]$0 (100% Local)[/green]",
+            f"[bold]Avg Latency:[/] [cyan]{avg_latency:.1f} ms/doc[/cyan]",
             title="Benchmark Performance",
             border_style="green",
         )
@@ -391,19 +394,22 @@ def main() -> None:
         help="Force full offline mode (reads directly from local cache without checking HuggingFace Hub).",
     )
     parser.add_argument(
+        "--online",
+        action="store_true",
+        help="Force online mode to check Hugging Face Hub for model updates even if cached.",
+    )
+    parser.add_argument(
         "--config",
         type=str,
         default=None,
         help="Path to settings file (.toml or .json).",
     )
-    parser.add_argument(
-        "--extensions",
-        type=str,
-        default=None,
-        help="Comma-separated list of file extensions to scan (e.g. '.pdf,.docx,.txt').",
-    )
 
     args = parser.parse_args()
+
+    if args.offline and args.online:
+        console.print("[bold red]Argument Error:[/] Cannot specify both --offline and --online.")
+        sys.exit(1)
 
     # Load settings from config file if found/specified
     try:
@@ -411,15 +417,6 @@ def main() -> None:
     except Exception as err:
         console.print(f"[bold red]Configuration Error:[/] {err}")
         sys.exit(1)
-
-    # CLI flag overrides configured extensions
-    if args.extensions:
-        parsed_exts = [
-            normalize_extension(e)
-            for e in args.extensions.split(",")
-            if normalize_extension(e)
-        ]
-        settings.scanner.extensions = parsed_exts
 
     # Default action if nothing specified
     if not (args.samples or args.scan or args.undo):
@@ -432,13 +429,23 @@ def main() -> None:
         run_undo(engine, target_dir)
         return
 
+    offline_mode: Union[bool, str] = "auto"
     if args.offline:
-        import os
-        os.environ["HF_HUB_OFFLINE"] = "1"
+        offline_mode = True
+    elif args.online:
+        offline_mode = False
+    elif hasattr(settings, "model") and settings.model.offline:
+        offline_mode = settings.model.offline
+
+    # Notify user if downloading model for the first time
+    if offline_mode == "auto" and not is_model_cached():
+        console.print(
+            "[cyan]Model not found in local cache. Downloading from Hugging Face Hub for first-time setup...[/cyan]"
+        )
 
     # Load classifier
     try:
-        classifier = DocumentClassifier(device=args.device)
+        classifier = DocumentClassifier(device=args.device, offline=offline_mode)
     except (CudaDeviceError, RuntimeError) as err:
         console.print(f"[bold red]Device Error:[/] {err}")
         if args.device and "cuda" in str(args.device).lower():

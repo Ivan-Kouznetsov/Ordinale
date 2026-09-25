@@ -165,3 +165,31 @@ def test_load_settings_fallback_to_default_file():
     assert ".docx" in settings.scanner.extensions
     assert ".md" in settings.scanner.extensions
 
+
+def test_model_config_defaults_and_custom(tmp_path: Path):
+    from ordinale.config import ModelConfig
+
+    settings = get_default_settings()
+    assert isinstance(settings.model, ModelConfig)
+    assert settings.model.model_id == "convaiinnovations/laya"
+    assert settings.model.subfolder is None
+    assert settings.model.offline == "auto"
+
+    # Test loading model config from JSON
+    config_file = tmp_path / "ordinale.json"
+    config_file.write_text(
+        json.dumps({
+            "model": {
+                "model_id": "custom/model",
+                "subfolder": "multilingual",
+                "offline": "true",
+            }
+        }),
+        encoding="utf-8",
+    )
+    loaded = load_settings(config_path=config_file)
+    assert loaded.model.model_id == "custom/model"
+    assert loaded.model.subfolder == "multilingual"
+    assert loaded.model.offline == "true"
+
+

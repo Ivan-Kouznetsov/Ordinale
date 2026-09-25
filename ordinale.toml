@@ -23,3 +23,10 @@ extensions = [
 ".htm" = "html"
 ".mhtml" = "html"
 ".rtf" = "rtf"
+
+[model]
+# Model identifier (defaults to "convaiinnovations/laya")
+model_id = "convaiinnovations/laya"
+# Offline mode policy: "auto" (default: uses offline mode if model is cached), "true", or "false"
+offline = "auto"
+

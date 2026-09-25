@@ -85,15 +85,25 @@ class ScannerConfig:
 
 
 @dataclass
+class ModelConfig:
+    """Model and offline detection configuration options."""
+
+    model_id: str = "convaiinnovations/laya"
+    subfolder: Optional[str] = None
+    offline: str = "auto"
+
+
+@dataclass
 class Settings:
     """Root configuration settings container."""
 
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
 
 
 def get_default_settings() -> Settings:
     """Returns a Settings instance with default values."""
-    return Settings(scanner=ScannerConfig())
+    return Settings(scanner=ScannerConfig(), model=ModelConfig())
 
 
 def find_settings_file(
@@ -185,11 +195,21 @@ def _parse_dict_to_settings(data: Dict[str, Any]) -> Settings:
             if norm_k:
                 custom_types[norm_k] = str(v).lower()
 
+    model_data = data.get("model", {})
+    if not isinstance(model_data, dict):
+        model_data = {}
+    model_cfg = ModelConfig(
+        model_id=str(model_data.get("model_id", "convaiinnovations/laya")),
+        subfolder=model_data.get("subfolder"),
+        offline=str(model_data.get("offline", "auto")),
+    )
+
     return Settings(
         scanner=ScannerConfig(
             extensions=extensions,
             custom_types=custom_types,
-        )
+        ),
+        model=model_cfg,
     )
 
 

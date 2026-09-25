@@ -23,7 +23,9 @@ def test_cli_help(capsys):
     assert "--sequential" in captured.out
     assert "--no-preserve-folders" in captured.out
     assert "--config" in captured.out
-    assert "--extensions" in captured.out
+    assert "--offline" in captured.out
+    assert "--online" in captured.out
+    assert "--extensions" not in captured.out
 
 
 @patch("ordinale.doc_organizer.DocumentClassifier")
@@ -67,20 +69,58 @@ def test_cli_sequential_and_no_preserve_folders(mock_run_scan, mock_classifier):
 
 @patch("ordinale.doc_organizer.DocumentClassifier")
 @patch("ordinale.doc_organizer.run_scan_and_organize")
-def test_cli_config_and_extensions(mock_run_scan, mock_classifier, tmp_path: Path):
+def test_cli_config(mock_run_scan, mock_classifier, tmp_path: Path):
     cfg_file = tmp_path / "ordinale.json"
-    cfg_file.write_text('{"scanner": {"extensions": [".pdf"]}}', encoding="utf-8")
+    cfg_file.write_text('{"scanner": {"extensions": [".pdf", ".docx"]}}', encoding="utf-8")
 
     with patch("sys.argv", [
         "doc_organizer.py",
         "--scan", "my_folder",
         "--config", str(cfg_file),
-        "--extensions", ".pdf,.docx",
     ]):
         main()
 
     assert mock_run_scan.called
     engine_arg = mock_run_scan.call_args[1]["engine"]
     assert engine_arg.settings.scanner.extensions == [".pdf", ".docx"]
+
+
+@patch("ordinale.doc_organizer.DocumentClassifier")
+@patch("ordinale.doc_organizer.display_benchmark_samples")
+def test_cli_offline_flag(mock_display, mock_classifier):
+    with patch("sys.argv", ["doc_organizer.py", "--offline"]):
+        main()
+    assert mock_classifier.called
+    _, kwargs = mock_classifier.call_args
+    assert kwargs.get("offline") is True
+
+
+@patch("ordinale.doc_organizer.DocumentClassifier")
+@patch("ordinale.doc_organizer.display_benchmark_samples")
+def test_cli_online_flag(mock_display, mock_classifier):
+    with patch("sys.argv", ["doc_organizer.py", "--online"]):
+        main()
+    assert mock_classifier.called
+    _, kwargs = mock_classifier.call_args
+    assert kwargs.get("offline") is False
+
+
+def test_cli_conflicting_offline_online_flags():
+    with pytest.raises(SystemExit) as exc_info:
+        with patch("sys.argv", ["doc_organizer.py", "--offline", "--online"]):
+            main()
+    assert exc_info.value.code == 1
+
+
+@patch("ordinale.doc_organizer.is_model_cached", return_value=True)
+@patch("ordinale.doc_organizer.DocumentClassifier")
+@patch("ordinale.doc_organizer.display_benchmark_samples")
+def test_cli_default_auto_offline(mock_display, mock_classifier, mock_is_cached):
+    with patch("sys.argv", ["doc_organizer.py"]):
+        main()
+    assert mock_classifier.called
+    _, kwargs = mock_classifier.call_args
+    assert kwargs.get("offline") == "auto"
+
 
 
