@@ -191,5 +191,3 @@ def test_model_config_defaults_and_custom(tmp_path: Path):
     assert loaded.model.model_id == "custom/model"
     assert loaded.model.subfolder == "multilingual"
     assert loaded.model.offline == "true"
-
-

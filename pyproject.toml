@@ -36,6 +36,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
+    "pre-commit>=3.5.0",
 ]
 
 [project.scripts]
@@ -51,3 +52,6 @@ ordinale = ["*.toml", "*.json"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+    "requires_model: Tests requiring the full Hugging Face Laya model checkpoint downloaded locally.",
+]

@@ -74,14 +74,14 @@ def test_extract_docx(extractor: DocumentTextExtractor, tmp_path: Path):
     doc_builder.core_properties.author = "Jane Doe"
     doc_builder.add_heading("Lab 3: Binary Search Trees", level=1)
     doc_builder.add_paragraph("Implement insert, delete, and in-order traversal in Python.")
-    
+
     # Add table with some details
     table = doc_builder.add_table(rows=2, cols=2)
     table.cell(0, 0).text = "Deliverable"
     table.cell(0, 1).text = "Weight"
     table.cell(1, 0).text = "bst.py"
     table.cell(1, 1).text = "10%"
-    
+
     doc_builder.save(str(docx_file))
 
     doc = extractor.extract(docx_file)
@@ -96,7 +96,7 @@ def test_extract_docx(extractor: DocumentTextExtractor, tmp_path: Path):
 
 def test_extract_pdf(extractor: DocumentTextExtractor, tmp_path: Path):
     pdf_file = tmp_path / "cra_notice.pdf"
-    
+
     # Generate minimal valid PDF with pypdf
     writer = pypdf.PdfWriter()
     writer.add_blank_page(width=612, height=792)
@@ -127,7 +127,7 @@ def test_extract_binary_fallback(extractor: DocumentTextExtractor, tmp_path: Pat
 def test_extract_rtf(extractor: DocumentTextExtractor, tmp_path: Path):
     rtf_file = tmp_path / "agreement.rtf"
     rtf_content = r"""{\rtf1\ansi\ansicpg1252\deff0\deflang1033{\fonttbl{\f0\fnil\fcharset0 Arial;}}
-{\*\generator Riched20 10.0.19041}\viewkind4\uc1 
+{\*\generator Riched20 10.0.19041}\viewkind4\uc1
 \pard\sa200\sl276\slmult1\b\f0\fs24 Residential Tenancy Agreement\b0\par
 This agreement is entered into on January 1, 2026.\par
 Monthly rent: \$1,800.\par
@@ -142,4 +142,3 @@ Monthly rent: \$1,800.\par
     assert r"\fonttbl" not in doc.text_snippet
     assert r"\generator" not in doc.text_snippet
     assert "agreement.rtf" in doc.prompt_text
-

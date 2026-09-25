@@ -29,4 +29,3 @@ extensions = [
 model_id = "convaiinnovations/laya"
 # Offline mode policy: "auto" (default: uses offline mode if model is cached), "true", or "false"
 offline = "auto"
-
