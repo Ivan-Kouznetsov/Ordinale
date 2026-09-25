@@ -1,0 +1,64 @@
+"""Unit tests for doc_organizer.py CLI."""
+
+from unittest.mock import patch, MagicMock
+from pathlib import Path
+import pytest
+
+from ordinale.doc_organizer import main
+
+
+def test_cli_help(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        with patch("sys.argv", ["doc_organizer.py", "--help"]):
+            main()
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "--scan" in captured.out
+    assert "--target" in captured.out
+    assert "--execute" in captured.out
+    assert "--undo" in captured.out
+    assert "--samples" in captured.out
+    assert "--no-recursive" in captured.out
+    assert "--workers" in captured.out
+    assert "--sequential" in captured.out
+    assert "--no-preserve-folders" in captured.out
+
+
+@patch("ordinale.doc_organizer.DocumentClassifier")
+@patch("ordinale.doc_organizer.display_benchmark_samples")
+def test_cli_default_samples(mock_display, mock_classifier):
+    with patch("sys.argv", ["doc_organizer.py"]):
+        main()
+    assert mock_display.called
+
+
+@patch("ordinale.doc_organizer.OrganizerEngine")
+@patch("ordinale.doc_organizer.run_undo")
+def test_cli_undo(mock_undo, mock_engine):
+    with patch("sys.argv", ["doc_organizer.py", "--undo", "--target", "MyOrganized"]):
+        main()
+    assert mock_undo.called
+
+
+@patch("ordinale.doc_organizer.DocumentClassifier")
+@patch("ordinale.doc_organizer.run_scan_and_organize")
+def test_cli_scan_args(mock_run_scan, mock_classifier):
+    with patch("sys.argv", ["doc_organizer.py", "--scan", "my_folder", "--no-recursive", "--workers", "6"]):
+        main()
+    assert mock_run_scan.called
+    _, kwargs = mock_run_scan.call_args
+    assert kwargs["recursive"] is False
+    assert kwargs["max_workers"] == 6
+    assert kwargs["preserve_folders"] is True
+
+
+@patch("ordinale.doc_organizer.DocumentClassifier")
+@patch("ordinale.doc_organizer.run_scan_and_organize")
+def test_cli_sequential_and_no_preserve_folders(mock_run_scan, mock_classifier):
+    with patch("sys.argv", ["doc_organizer.py", "--scan", "my_folder", "--sequential", "--no-preserve-folders"]):
+        main()
+    assert mock_run_scan.called
+    _, kwargs = mock_run_scan.call_args
+    assert kwargs["max_workers"] == 1
+    assert kwargs["preserve_folders"] is False
+

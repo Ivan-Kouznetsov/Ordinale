@@ -1,0 +1,145 @@
+[
+  {
+    "id": "DOC-001",
+    "filename": "CRA_Notice_of_Assessment_2025.pdf",
+    "title": "Canada Revenue Agency - Notice of Assessment",
+    "content": "CANADA REVENUE AGENCY / AGENCE DU REVENU DU CANADA\nNotice of Assessment / Avis de cotisation\nTax Year: 2025 | Date of Issue: May 14, 2026\nSocial Insurance Number: XXX-XX-4912\nSummary of Assessment:\nTotal Income (Line 15000): $94,500.00\nNet Income: $88,200.00\nTotal Payable: $18,450.00\nTotal Credits: $19,100.00\nRefund: $650.00 will be deposited directly to your bank account.",
+    "expected_category": "financial",
+    "expected_financial_type": "taxes_government",
+    "expected_retention_min": 1.5,
+    "expected_sensitive": true
+  },
+  {
+    "id": "DOC-002",
+    "filename": "CRA_Demand_Payment_Overdue_Tax.pdf",
+    "title": "Canada Revenue Agency - Final Demand for Payment",
+    "content": "CANADA REVENUE AGENCY - COLLECTIONS AND COMPLIANCE BRANCH\nFINAL DEMAND FOR PAYMENT - OVERDUE TAX ACCOUNT\nAccount ID: 893129481 RT0001\nOur records indicate an unpaid balance of $4,320.18 for the 2024 tax year plus compounded daily interest. If full payment or a payment arrangement is not established within 10 business days of this letter, legal enforcement actions may commence.",
+    "expected_category": "financial",
+    "expected_financial_type": "taxes_government",
+    "expected_retention_min": 1.5,
+    "expected_sensitive": true
+  },
+  {
+    "id": "DOC-003",
+    "filename": "RBC_Checking_Statement_August_2026.pdf",
+    "title": "Royal Bank of Canada - Monthly Account Statement",
+    "content": "Royal Bank of Canada - Client Account Statement\nAccount Number: 00412-5892147 (Day to Day Banking)\nStatement Period: Aug 1, 2026 to Aug 31, 2026\nOpening Balance: $3,450.21\nTotal Deposits: $5,200.00 (Payroll Direct Dep)\nTotal Withdrawals: $4,120.50\nClosing Balance: $4,529.71\nTransactions: Aug 3 Pre-authorized Mortgage -$1,850.00; Aug 12 Hydro -$115.40.",
+    "expected_category": "financial",
+    "expected_financial_type": "banking",
+    "expected_retention_min": 1.0,
+    "expected_sensitive": true
+  },
+  {
+    "id": "DOC-004",
+    "filename": "Wealthsimple_TFSA_Q2_Performance.pdf",
+    "title": "Wealthsimple Investments Portfolio Summary",
+    "content": "Wealthsimple Investments Inc. - Tax-Free Savings Account (TFSA)\nQuarterly Statement - Q2 2026 (Apr 1 - Jun 30)\nPortfolio Value: $48,912.40\nTotal Unrealized Gain: +$6,230.15 (+14.5%)\nAsset Allocation: 80% Equities (Vanguard All-Cap ETF), 20% Fixed Income. Dividends reinvested: $312.40.",
+    "expected_category": "financial",
+    "expected_financial_type": "investments",
+    "expected_retention_min": 1.0,
+    "expected_sensitive": true
+  },
+  {
+    "id": "DOC-005",
+    "filename": "Paystub_AcmeCorp_Period18.pdf",
+    "title": "Earnings Statement - Acme Technologies",
+    "content": "Acme Technologies Inc. - Bi-Weekly Earnings Statement\nEmployee: Jane Doe | ID: EMP-4029 | Pay Date: 2026-09-15\nGross Earnings: $4,200.00\nFederal Tax: $612.40 | CPP Contribution: $245.10 | EI Premium: $68.40\nHealth & Dental: $45.00\nNet Pay Deposited: $3,229.10",
+    "expected_category": "financial",
+    "expected_financial_type": "payroll",
+    "expected_retention_min": 1.0,
+    "expected_sensitive": true
+  },
+  {
+    "id": "DOC-006",
+    "filename": "AWS_Invoice_INV-89312.pdf",
+    "title": "Amazon Web Services Invoice",
+    "content": "Amazon Web Services, Inc. - Invoice Summary\nInvoice Number: 981249120 | Billing Period: August 2026\nAccount: 1294-8192-4019\nCharges: Amazon EC2: $42.18, Amazon S3 Standard Storage: $4.50, Route 53 Hosted Zone: $0.50.\nTotal Due: $47.18 USD paid via Visa ending in 4112 on Sept 3, 2026.",
+    "expected_category": "receipts",
+    "expected_retention_min": 0.5,
+    "expected_sensitive": false
+  },
+  {
+    "id": "DOC-007",
+    "filename": "Uber_Trip_Receipt_Downtown.pdf",
+    "title": "Your Tuesday Morning Trip with Uber",
+    "content": "Total: $24.85\nSeptember 8, 2026 | 8:42 AM\nTrip Route: 140 Bay St to 55 University Ave\nFare breakdown: Base fare $3.50, Distance $15.20, Time $4.15, HST $2.00.\nPayment: Apple Pay (Mastercard ****9012)",
+    "expected_category": "receipts",
+    "expected_retention_min": 0.0,
+    "expected_sensitive": false
+  },
+  {
+    "id": "DOC-008",
+    "filename": "Residential_Tenancy_Lease_Agreement.docx",
+    "title": "Standard Residential Tenancy Agreement",
+    "content": "RESIDENTIAL TENANCY AGREEMENT\nThis agreement is made between Landlord: Maple Ridge Properties and Tenant: Ivan Kouznetsov.\nPremises: Suite 402, 120 King Street West.\nTerm: 12-month fixed term commencing November 1, 2026.\nRent: $2,400.00 per month payable on the 1st of each month.\nSecurity Deposit: One month's rent held in escrow. Tenant agrees to maintain premises in clean condition.",
+    "expected_category": "contracts",
+    "expected_retention_min": 1.5,
+    "expected_sensitive": true
+  },
+  {
+    "id": "DOC-009",
+    "filename": "CS240_Homework_3_Dynamic_Programming.docx",
+    "title": "CS240 Data Structures & Algorithms - Problem Set 3",
+    "content": "University Department of Computer Science\nCourse: CS240 Algorithms & Data Structures | Professor: Dr. Higgins\nHomework 3: Dynamic Programming and Bellman-Ford Optimization\nDue Date: Friday, October 16 at 11:59 PM EST\nProblem 1: Given a weighted directed graph G=(V,E), formulate a recurrence relation for the shortest path with at most k edges. Prove optimal substructure.",
+    "expected_category": "education_academic",
+    "expected_education_type": "school",
+    "expected_retention_min": 0.8,
+    "expected_sensitive": false
+  },
+  {
+    "id": "DOC-010",
+    "filename": "Biology101_Lab4_Enzyme_Kinetics.docx",
+    "title": "Lab Report: Factors Affecting Catalase Reaction Rates",
+    "content": "Department of Biological Sciences - BIO 101L\nStudent: Alex Chen | Lab Section: 04\nTitle: The Effect of Substrate Concentration on Catalase Velocity in Solanum tuberosum\nAbstract: In this experiment, hydrogen peroxide concentrations from 0.5% to 3.0% were tested against constant catalase enzyme extracts. Reaction velocity was measured via O2 gas production. Results confirmed Michaelis-Menten kinetics with an estimated Vmax of 4.2 mL/min.",
+    "expected_category": "education_academic",
+    "expected_education_type": "school",
+    "expected_retention_min": 0.8,
+    "expected_sensitive": false
+  },
+  {
+    "id": "DOC-011",
+    "filename": "Attention_Is_All_You_Need_Arxiv_1706.pdf",
+    "title": "Attention Is All You Need",
+    "content": "Attention Is All You Need\nAshish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, Illia Polosukhin\nAbstract: The dominant sequence transduction models are based on complex recurrent or convolutional neural networks. We propose the Transformer, a model architecture eschewing recurrence and relying entirely on an attention mechanism to draw global dependencies between input and output. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable.",
+    "expected_category": "education_academic",
+    "expected_education_type": "academic",
+    "expected_retention_min": 1.0,
+    "expected_sensitive": false
+  },
+  {
+    "id": "DOC-012",
+    "filename": "Blog_Snapshot_Understanding_Raft_Consensus.html",
+    "title": "Understanding Raft Consensus Algorithm in Distributed Systems",
+    "content": "Web Snapshot from distributed-systems-blog.io\nArticle: In Search of an Understandable Consensus Algorithm\nBy Diego Ongaro and John Ousterhout. Raft is a consensus algorithm designed as an alternative to Paxos. It was meant to be more understandable than Paxos by means of separation of logic into Leader Election, Log Replication, and Safety guarantees.",
+    "expected_category": "web_snapshots",
+    "expected_retention_min": 0.5,
+    "expected_sensitive": false
+  },
+  {
+    "id": "DOC-013",
+    "filename": "Ivan_Kouznetsov_Senior_Software_Engineer_CV.docx",
+    "title": "Curriculum Vitae - Ivan Kouznetsov",
+    "content": "Ivan Kouznetsov | Software Engineer | Portfolio: github.com/user | Email: ivan@example.com\nSUMMARY: Systems and backend engineer with 8+ years experience building distributed data pipelines, high-throughput APIs in Python and Rust, and machine learning deployment platforms.\nEXPERIENCE:\nSenior Software Engineer at Horizon Cloud (2022-Present): Led low-latency microservices migration.\nEDUCATION: B.Sc. Computer Science.",
+    "expected_category": "resumes",
+    "expected_retention_min": 1.2,
+    "expected_sensitive": true
+  },
+  {
+    "id": "DOC-014",
+    "filename": "Dell_Ultrasharp_Monitor_User_Manual.pdf",
+    "title": "Dell UltraSharp 27 4K Monitor U2723QE User's Guide",
+    "content": "Dell Inc. - UltraSharp 27 4K USB-C Hub Monitor (Model U2723QE)\nUser's Guide and Setup Instructions\nChapter 1: About Your Monitor, Package Contents, Connecting USB Type-C Cable, DisplayPort and HDMI inputs. Chapter 2: Operating the Monitor with On-Screen Display (OSD) Menu and Joystick Controls. Specifications: 3840 x 2160 at 60 Hz, IPS Black Technology.",
+    "expected_category": "manuals",
+    "expected_retention_min": 0.8,
+    "expected_sensitive": false
+  },
+  {
+    "id": "DOC-015",
+    "filename": "scratchpad_meeting_notes_tuesday.txt",
+    "title": "Meeting Scratchpad",
+    "content": "Quick meeting notes 9/12\n- talk to Dave about docker image build times\n- order more coffee filters\n- sync tomorrow 10am\n- test laya decision latency on gpu",
+    "expected_category": "scratch_notes",
+    "expected_retention_min": 0.0,
+    "expected_sensitive": false
+  }
+]
