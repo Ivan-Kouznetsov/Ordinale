@@ -11,6 +11,7 @@ from ordinale.doc_classifier import (
     EDUCATION_SUBDESTINATIONS,
     DocumentClassifier,
     disambiguate_education_academic,
+    is_model_cached,
 )
 
 
@@ -237,7 +238,9 @@ def is_cuda_supported_on_system() -> bool:
         return False
 
 
+@pytest.mark.requires_model
 @pytest.mark.skipif(not is_cuda_supported_on_system(), reason="Requires a computer supporting CUDA execution")
+@pytest.mark.skipif(not is_model_cached(), reason="Requires Laya model to be cached locally without downloading from Hugging Face")
 def test_autodetect_and_use_cuda():
     classifier = DocumentClassifier(device=None)
     assert classifier.device == "cuda"
@@ -330,6 +333,3 @@ def test_document_classifier_passes_offline(mock_configure, mock_load):
         subfolder=None,
         offline=True,
     )
-
-
-

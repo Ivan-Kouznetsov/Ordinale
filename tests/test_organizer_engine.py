@@ -256,4 +256,3 @@ def test_batch_claimed_targets_same_folder_collision(tmp_path: Path, mock_classi
     # f3 has identical content to f1 -> marked as duplicate of statement.pdf
     assert plans[2].target_path.name == "statement.pdf"
     assert plans[2].is_duplicate is True
-

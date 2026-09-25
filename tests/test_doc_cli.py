@@ -121,6 +121,3 @@ def test_cli_default_auto_offline(mock_display, mock_classifier, mock_is_cached)
     assert mock_classifier.called
     _, kwargs = mock_classifier.call_args
     assert kwargs.get("offline") == "auto"
-
-
-
