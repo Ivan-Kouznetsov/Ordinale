@@ -160,7 +160,7 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-> **Note on Initial Run**: On its first run, Ordinale automatically downloads the lightweight Laya model weights (`convaiinnovations/laya`) from Hugging Face Hub to your local cache. If running in an air-gapped or offline environment, pre-download the model and pass `--offline`.
+> **Note on Initial Run & Offline Detection**: On its first run, Ordinale downloads the lightweight Laya model weights (`convaiinnovations/laya`) from Hugging Face Hub to your local cache. Once cached, **Ordinale automatically activates offline mode on all subsequent runs** to bypass unnecessary network checks, eliminate download latency, and work in air-gapped environments. Pass `--online` to force checking Hugging Face Hub for updates.
 
 ---
 
@@ -170,23 +170,23 @@ Once installed, you can invoke the CLI using `ordinale`, `doc-organizer`, or `py
 
 ### Command-Line Options
 
-| Flag | Argument | Description |
-| :--- | :--- | :--- |
-| `--scan` | `<PATH>` | Source directory containing documents to organize. |
-| `--target` | `<PATH>` | Destination root directory (defaults to `<source>/Organized_Documents`). |
-| `--execute` | *None* | Perform actual file moves. *(Without this flag, Ordinale runs in safe dry-run preview mode.)* |
-| `--interactive` | *None* | Prompts for confirmation when routing low-confidence documents. |
-| `--undo` | *None* | Reverts the last executed move batch using the manifest ledger. |
-| `--samples` | *None* | Runs categorization benchmark against test sample documents (default action if no flags provided). |
-| `--samples-file` | `<FILE>` | Path to custom benchmark JSON dataset. |
-| `--device` | `cpu` \| `cuda` \| `mps` | Hardware device to use. Defaults to automatic detection. |
-| `--workers`, `-w` | `<INT>` | Number of parallel worker threads for analysis (defaults to `min(8, CPU cores)`). |
-| `--sequential` | *None* | Force single-threaded processing. |
-| `--no-recursive` | *None* | Only scan the top-level directory, ignoring subdirectories. |
-| `--no-preserve-folders` | *None* | Do not preserve relative source subdirectories under destination categories. |
-| `--offline` | *None* | Strictly use locally cached Hugging Face model weights without network checks. |
-| `--config` | `<PATH>` | Path to a custom settings file (`.toml` or `.json`). |
-| `--extensions` | `<EXTS>` | Comma-separated list of extensions to scan (e.g. `.pdf,.docx,.txt`). |
+| Flag | Argument | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--scan` | `<PATH>` | *None* | Source directory containing documents to organize. |
+| `--target` | `<PATH>` | `<source>/Organized_Documents` | Destination root directory for sorted folders. |
+| `--execute` | *None* | *Disabled (Dry-run)* | Perform actual file moves. *(By default, runs in safe preview mode without moving files.)* |
+| `--interactive` | *None* | *Disabled* | Prompts for manual confirmation when routing low-confidence documents. |
+| `--undo` | *None* | *Disabled* | Reverts the last executed move batch using the manifest ledger. |
+| `--samples` | *None* | *Active (Default action)* | Runs categorization benchmark against test sample documents (runs when neither `--scan` nor `--undo` is passed). |
+| `--samples-file` | `<FILE>` | `sample_documents.json` | Path to benchmark JSON dataset. |
+| `--device` | `cpu` \| `cuda` \| `mps` | `auto` | Hardware compute device (auto-detects CUDA $\rightarrow$ MPS $\rightarrow$ CPU). |
+| `--workers`, `-w` | `<INT>` | `min(8, CPU cores)` | Number of parallel worker threads for file analysis. |
+| `--sequential` | *None* | *Disabled (Parallel)* | Force single-threaded processing. |
+| `--no-recursive` | *None* | *Disabled (Recursive)* | Only scan the top-level directory, ignoring subdirectories. |
+| `--no-preserve-folders` | *None* | *Disabled (Preserve)* | Do not preserve relative source subdirectories under destination categories. |
+| `--offline` | *None* | *Auto (On if cached)* | Force offline mode (reads directly from local cache without checking Hugging Face Hub). Enabled automatically if model is already downloaded. |
+| `--online` | *None* | *Disabled* | Force online mode to check Hugging Face Hub for model updates even if cached locally. |
+| `--config` | `<PATH>` | Auto-discovered / bundled | Path to a custom settings file (`.toml` or `.json`). |
 
 ---
 
@@ -257,11 +257,6 @@ extensions = [".pdf", ".docx"]
 Or pass a settings file explicitly:
 ```bash
 ordinale --scan "./my_docs" --config "./my_settings.toml"
-```
-
-Or override scanned extensions directly on the command line:
-```bash
-ordinale --scan "./my_docs" --extensions .pdf,.docx
 ```
 
 #### 6. Fast Parallel Processing on Large Collections

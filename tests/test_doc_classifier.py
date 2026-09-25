@@ -1,5 +1,6 @@
 """Unit tests for DocumentClassifier and decision logic."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 import pytest
 
@@ -242,5 +243,93 @@ def test_autodetect_and_use_cuda():
     assert classifier.device == "cuda"
     assert getattr(classifier._agent, "device", None) is not None
     assert getattr(classifier._agent.device, "type", "") == "cuda"
+
+
+def test_is_model_cached_local_dir(tmp_path: Path):
+    from ordinale.doc_classifier import is_model_cached
+
+    model_dir = tmp_path / "my_model"
+    model_dir.mkdir()
+    assert is_model_cached(str(model_dir)) is False
+
+    (model_dir / "rl_agent_config.json").write_text("{}", encoding="utf-8")
+    assert is_model_cached(str(model_dir)) is False
+
+    (model_dir / "model.safetensors").write_text("dummy", encoding="utf-8")
+    assert is_model_cached(str(model_dir)) is True
+
+    # With subfolder
+    sub_dir = model_dir / "sub"
+    assert is_model_cached(str(model_dir), subfolder="sub") is False
+    sub_dir.mkdir()
+    (sub_dir / "rl_agent_config.json").write_text("{}", encoding="utf-8")
+    (sub_dir / "model.safetensors").write_text("dummy", encoding="utf-8")
+    assert is_model_cached(str(model_dir), subfolder="sub") is True
+
+
+def test_is_model_cached_hub_snapshot(tmp_path: Path):
+    from ordinale.doc_classifier import is_model_cached, resolve_cached_model_path
+
+    cfg_file = str(tmp_path / "rl_agent_config.json")
+    weights_file = str(tmp_path / "model.safetensors")
+    with open(cfg_file, "w") as f:
+        f.write("{}")
+    with open(weights_file, "w") as f:
+        f.write("dummy")
+
+    def mock_cache(repo, filename):
+        if filename == "rl_agent_config.json":
+            return cfg_file
+        if filename == "model.safetensors":
+            return weights_file
+        return None
+
+    with patch("huggingface_hub.try_to_load_from_cache", side_effect=mock_cache):
+        assert is_model_cached("my_org/my_model") is True
+        assert resolve_cached_model_path("my_org/my_model") == str(tmp_path)
+
+    with patch("huggingface_hub.try_to_load_from_cache", return_value=None):
+        assert is_model_cached("my_org/my_model") is False
+        assert resolve_cached_model_path("my_org/my_model") is None
+
+
+def test_configure_offline_mode():
+    import os
+    from ordinale.doc_classifier import configure_offline_mode
+
+    # Force offline True
+    assert configure_offline_mode(offline=True) is True
+    assert os.environ.get("HF_HUB_OFFLINE") == "1"
+    assert os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+
+    # Force online False
+    assert configure_offline_mode(offline=False) is False
+    assert "HF_HUB_OFFLINE" not in os.environ
+    assert "TRANSFORMERS_OFFLINE" not in os.environ
+
+    # Auto mode when cached
+    with patch("ordinale.doc_classifier.is_model_cached", return_value=True):
+        assert configure_offline_mode(offline="auto") is True
+        assert os.environ.get("HF_HUB_OFFLINE") == "1"
+
+    # Auto mode when not cached
+    with patch("ordinale.doc_classifier.is_model_cached", return_value=False):
+        assert configure_offline_mode(offline="auto") is False
+        assert "HF_HUB_OFFLINE" not in os.environ
+
+
+@patch("laya.load")
+@patch("ordinale.doc_classifier.configure_offline_mode")
+def test_document_classifier_passes_offline(mock_configure, mock_load):
+    mock_agent = MagicMock()
+    mock_load.return_value = mock_agent
+
+    DocumentClassifier(offline=True)
+    mock_configure.assert_called_with(
+        repo_id_or_path="convaiinnovations/laya",
+        subfolder=None,
+        offline=True,
+    )
+
 
 
