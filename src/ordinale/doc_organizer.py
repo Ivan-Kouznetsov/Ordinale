@@ -129,8 +129,7 @@ def display_benchmark_samples(classifier: DocumentClassifier, samples_file: Path
         Panel(
             f"[bold]Total Documents Tested:[/] {len(samples)}  |  "
             f"[bold]Category Accuracy:[/] [green]{accuracy:.1f}%[/green] ({correct_matches}/{len(samples)})  |  "
-            f"[bold]Avg Latency:[/] [cyan]{avg_latency:.1f} ms/doc[/cyan]  |  "
-            f"[bold]Cost:[/] [green]$0 (100% Local)[/green]",
+            f"[bold]Avg Latency:[/] [cyan]{avg_latency:.1f} ms/doc[/cyan]",
             title="Benchmark Performance",
             border_style="green",
         )

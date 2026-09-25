@@ -452,7 +452,7 @@ This generates a detailed benchmark table and summary statistics:
 ┗━━━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━┛
 ...
 Benchmark Performance:
-Total Documents Tested: 12 | Category Accuracy: 100.0% | Avg Latency: ~18.5 ms/doc | Cost: $0 (100% Local)
+Total Documents Tested: 12 | Category Accuracy: 100.0% | Avg Latency: ~18.5 ms/doc
 ```
 
 ---
