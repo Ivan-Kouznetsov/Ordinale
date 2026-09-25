@@ -122,3 +122,24 @@ def test_extract_binary_fallback(extractor: DocumentTextExtractor, tmp_path: Pat
     assert doc.file_type == "binary"
     assert doc.file_size_bytes == 6
     assert doc.metadata.get("extension") == ".exe"
+
+
+def test_extract_rtf(extractor: DocumentTextExtractor, tmp_path: Path):
+    rtf_file = tmp_path / "agreement.rtf"
+    rtf_content = r"""{\rtf1\ansi\ansicpg1252\deff0\deflang1033{\fonttbl{\f0\fnil\fcharset0 Arial;}}
+{\*\generator Riched20 10.0.19041}\viewkind4\uc1 
+\pard\sa200\sl276\slmult1\b\f0\fs24 Residential Tenancy Agreement\b0\par
+This agreement is entered into on January 1, 2026.\par
+Monthly rent: \$1,800.\par
+}"""
+    rtf_file.write_text(rtf_content, encoding="utf-8")
+
+    doc = extractor.extract(rtf_file)
+    assert doc.file_type == "rtf"
+    assert "Residential Tenancy Agreement" in doc.text_snippet
+    assert "Monthly rent: $1,800." in doc.text_snippet
+    assert r"\rtf1" not in doc.text_snippet
+    assert r"\fonttbl" not in doc.text_snippet
+    assert r"\generator" not in doc.text_snippet
+    assert "agreement.rtf" in doc.prompt_text
+

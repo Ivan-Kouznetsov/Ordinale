@@ -16,6 +16,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from ordinale.config import Settings, normalize_extension
 from ordinale.doc_classifier import CudaDeviceError, DocumentClassifier
 from ordinale.extractor import DocumentTextExtractor, ExtractedDocument
 
@@ -46,8 +47,17 @@ class OrganizerEngine:
         self,
         extractor: Optional[DocumentTextExtractor] = None,
         classifier: Optional[DocumentClassifier] = None,
+        settings: Optional[Settings] = None,
     ) -> None:
-        self.extractor = extractor or DocumentTextExtractor()
+        self.settings = settings
+        if extractor is not None:
+            self.extractor = extractor
+        elif settings is not None:
+            self.extractor = DocumentTextExtractor(
+                supported_extensions=settings.scanner.get_effective_supported_extensions()
+            )
+        else:
+            self.extractor = DocumentTextExtractor()
         self.classifier = classifier
 
     def scan_directory(
@@ -55,6 +65,7 @@ class OrganizerEngine:
         source_dir: Path | str,
         recursive: bool = True,
         exclude_dirs: Optional[List[Path | str]] = None,
+        extensions: Optional[Iterable[str]] = None,
     ) -> List[Path]:
         """Discovers all supported document files in the given directory.
 
@@ -62,6 +73,7 @@ class OrganizerEngine:
             source_dir: Directory containing documents to scan.
             recursive: If True, recursively traverses all subdirectories.
             exclude_dirs: Optional list of directories to exclude (e.g. target output root).
+            extensions: Optional override list of extensions to look for.
 
         Returns:
             Sorted list of discovered document Paths.
@@ -71,6 +83,14 @@ class OrganizerEngine:
             return []
 
         resolved_excludes = [Path(d).resolve() for d in (exclude_dirs or [])]
+        allowed_exts: Optional[Set[str]] = None
+        if extensions is not None:
+            allowed_exts = {normalize_extension(e) for e in extensions if normalize_extension(e)}
+
+        def _is_match(path: Path) -> bool:
+            if allowed_exts is not None:
+                return path.suffix.lower() in allowed_exts and self.extractor.is_supported(path)
+            return self.extractor.is_supported(path)
 
         def _is_excluded(path: Path) -> bool:
             p_res = path.resolve()
@@ -101,12 +121,12 @@ class OrganizerEngine:
                     if fname.startswith("."):
                         continue
                     file_path = root_path / fname
-                    if self.extractor.is_supported(file_path):
+                    if _is_match(file_path):
                         found_files.append(file_path)
         else:
             for entry in src.iterdir():
                 if entry.is_file() and not entry.name.startswith("."):
-                    if self.extractor.is_supported(entry):
+                    if _is_match(entry):
                         found_files.append(entry)
 
         return sorted(found_files, key=lambda p: str(p).lower())

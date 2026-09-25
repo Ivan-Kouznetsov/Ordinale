@@ -223,3 +223,24 @@ def test_cuda_downgrade_to_cpu_raises_immediately(mock_load):
             DocumentClassifier(device="cuda")
         assert "fell back" in str(exc_info.value).lower()
 
+
+def is_cuda_supported_on_system() -> bool:
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return False
+        test_tensor = torch.zeros(1, device="cuda")
+        del test_tensor
+        return True
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(not is_cuda_supported_on_system(), reason="Requires a computer supporting CUDA execution")
+def test_autodetect_and_use_cuda():
+    classifier = DocumentClassifier(device=None)
+    assert classifier.device == "cuda"
+    assert getattr(classifier._agent, "device", None) is not None
+    assert getattr(classifier._agent.device, "type", "") == "cuda"
+
+

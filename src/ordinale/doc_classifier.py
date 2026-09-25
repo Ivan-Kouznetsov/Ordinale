@@ -12,10 +12,18 @@ from pathlib import Path
 import re
 import time
 from typing import Any, Dict, List, Optional
+import warnings
 
 # Disable symlinks on Windows to prevent WinError 1314 when running without Admin/Developer mode
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
+# Suppress known upstream Laya checkpoint temperature calibration warning
+warnings.filterwarnings(
+    "ignore",
+    message=r".*checkpoint ships invalid temperatures.*",
+    category=RuntimeWarning,
+)
 
 
 # Question criteria specifications for Laya
@@ -49,11 +57,11 @@ DOCUMENT_QUESTIONS: Dict[str, Any] = {
     "retention": {
         "type": "score",
         "instructions": "Rate how critical it is to retain this document permanently vs safe to prune eventually (0=disposable/short-lived, 1=active reference, 2=permanent archive).",
-        "criteria": {
-            "0": "Disposable or short-lived (ephemeral notes, quick web clippings, temporary order receipts)",
-            "1": "Reference material (manuals, school assignments, guides, reading papers)",
-            "2": "Permanent archive (tax assessments, CRA notices, legal contracts, identity documents, bank statements)",
-        },
+        "criteria": [
+            "Disposable or short-lived (ephemeral notes, quick web clippings, temporary order receipts)",
+            "Reference material (manuals, school assignments, guides, reading papers)",
+            "Permanent archive (tax assessments, CRA notices, legal contracts, identity documents, bank statements)",
+        ],
     },
     "is_sensitive": {
         "type": "noul",
@@ -280,6 +288,26 @@ class CudaDeviceError(RuntimeError):
     pass
 
 
+def autodetect_device() -> str:
+    """Autodetects the best available hardware device ('cuda', 'mps', or 'cpu') that can execute tensors."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            try:
+                # Verify that the device can successfully allocate a tensor and execute a kernel
+                test_tensor = torch.zeros(1, device="cuda")
+                del test_tensor
+                return "cuda"
+            except Exception:
+                pass
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
+    return "cpu"
+
+
 class DocumentClassifier:
     """Evaluates documents using Laya's typed question engine."""
 
@@ -290,7 +318,11 @@ class DocumentClassifier:
         confidence_threshold: float = 0.55,
     ) -> None:
         self.subfolder = subfolder
-        self.device = device
+        self._explicit_device = device is not None and str(device).lower() != "auto"
+        if not self._explicit_device:
+            self.device = autodetect_device()
+        else:
+            self.device = device
         self.confidence_threshold = confidence_threshold
         self._agent = None
         self._load_model()
@@ -301,7 +333,7 @@ class DocumentClassifier:
         import torch
 
         # If CUDA is explicitly requested, strictly validate CUDA without falling back to CPU
-        if self.device is not None and "cuda" in str(self.device).lower():
+        if self._explicit_device and self.device is not None and "cuda" in str(self.device).lower():
             if not torch.cuda.is_available():
                 raise CudaDeviceError(
                     f"CUDA device '{self.device}' was explicitly specified, but torch.cuda.is_available() is False. "
@@ -329,16 +361,18 @@ class DocumentClassifier:
         if self.device is not None and "cuda" in str(self.device).lower():
             agent_device = getattr(self._agent, "device", None)
             if agent_device is not None and getattr(agent_device, "type", "") != "cuda":
-                raise CudaDeviceError(
-                    f"CUDA was explicitly requested, but model device fell back to '{agent_device}'. "
-                    "Exiting without falling back to CPU."
-                )
+                if self._explicit_device:
+                    raise CudaDeviceError(
+                        f"CUDA was explicitly requested, but model device fell back to '{agent_device}'. "
+                        "Exiting without falling back to CPU."
+                    )
+                self.device = str(getattr(agent_device, "type", "cpu"))
 
             # Prevent Laya from silently falling back to CPU during prediction
             if hasattr(self._agent, "model") and hasattr(self._agent.model, "to"):
                 orig_to = self._agent.model.to
                 def strict_to(*args, **kwargs):
-                    if any(str(a).lower() == "cpu" or getattr(a, "type", "") == "cpu" for a in args):
+                    if self._explicit_device and any(str(a).lower() == "cpu" or getattr(a, "type", "") == "cpu" for a in args):
                         raise CudaDeviceError(
                             "CUDA was explicitly requested, but model attempted to fall back to CPU. "
                             "Exiting without falling back to CPU."
@@ -353,7 +387,7 @@ class DocumentClassifier:
                 {"category": DOCUMENT_QUESTIONS["category"]},
             )
         except Exception as e:
-            if self.device is not None and "cuda" in str(self.device).lower():
+            if self._explicit_device and self.device is not None and "cuda" in str(self.device).lower():
                 raise CudaDeviceError(
                     f"CUDA execution failed during model warmup: {e}. Exiting without falling back to CPU."
                 ) from e
@@ -363,15 +397,17 @@ class DocumentClassifier:
         if self.device is not None and "cuda" in str(self.device).lower():
             agent_device = getattr(self._agent, "device", None)
             if agent_device is not None and getattr(agent_device, "type", "") != "cuda":
-                raise CudaDeviceError(
-                    f"CUDA was explicitly requested, but model fell back to '{agent_device}' during inference. "
-                    "Exiting without falling back to CPU."
-                )
+                if self._explicit_device:
+                    raise CudaDeviceError(
+                        f"CUDA was explicitly requested, but model fell back to '{agent_device}' during inference. "
+                        "Exiting without falling back to CPU."
+                    )
+                self.device = str(getattr(agent_device, "type", "cpu"))
 
     def classify(self, prompt_text: str) -> Dict[str, Any]:
         """Runs a single forward pass over prompt_text evaluating all typed questions."""
         # Check strict CUDA device before inference
-        if self.device is not None and "cuda" in str(self.device).lower():
+        if self._explicit_device and self.device is not None and "cuda" in str(self.device).lower():
             agent_device = getattr(self._agent, "device", None)
             if agent_device is not None and getattr(agent_device, "type", "") != "cuda":
                 raise CudaDeviceError(
@@ -383,7 +419,7 @@ class DocumentClassifier:
         try:
             raw_result = self._agent.predict(prompt_text, DOCUMENT_QUESTIONS)
         except Exception as e:
-            if self.device is not None and "cuda" in str(self.device).lower():
+            if self._explicit_device and self.device is not None and "cuda" in str(self.device).lower():
                 raise CudaDeviceError(
                     f"CUDA execution failed during inference: {e}. Exiting without falling back to CPU."
                 ) from e
@@ -391,7 +427,7 @@ class DocumentClassifier:
         latency_ms = (time.perf_counter() - start_time) * 1000.0
 
         # Verify device remained on CUDA after inference
-        if self.device is not None and "cuda" in str(self.device).lower():
+        if self._explicit_device and self.device is not None and "cuda" in str(self.device).lower():
             agent_device = getattr(self._agent, "device", None)
             if agent_device is not None and getattr(agent_device, "type", "") != "cuda":
                 raise CudaDeviceError(

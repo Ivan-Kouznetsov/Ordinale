@@ -59,16 +59,36 @@ class DocumentTextExtractor:
         ".txt": "text",
         ".md": "markdown",
         ".markdown": "markdown",
-        ".rtf": "text",
+        ".rtf": "rtf",
     }
 
-    def __init__(self, max_chars: int = 1200):
+    def __init__(
+        self,
+        max_chars: int = 1200,
+        supported_extensions: Optional[Dict[str, str] | Any] = None,
+    ):
         self.max_chars = max_chars
+        if supported_extensions is None:
+            self.supported_extensions = dict(self.SUPPORTED_EXTENSIONS)
+        elif isinstance(supported_extensions, dict):
+            self.supported_extensions = {
+                (k if k.startswith(".") else f".{k}").lower().strip(): v
+                for k, v in supported_extensions.items()
+            }
+        else:
+            self.supported_extensions = {}
+            for ext in supported_extensions:
+                clean = ext.strip().lower()
+                if not clean:
+                    continue
+                if not clean.startswith("."):
+                    clean = f".{clean}"
+                self.supported_extensions[clean] = self.SUPPORTED_EXTENSIONS.get(clean, "text")
 
     def is_supported(self, file_path: Path | str) -> bool:
         """Checks if a file extension is natively supported for text extraction."""
         path = Path(file_path)
-        return path.suffix.lower() in self.SUPPORTED_EXTENSIONS
+        return path.suffix.lower() in self.supported_extensions
 
     def extract(self, file_path: Path | str) -> ExtractedDocument:
         """Extracts text and metadata from a document file."""
@@ -85,7 +105,7 @@ class DocumentTextExtractor:
 
         file_size = path.stat().st_size
         ext = path.suffix.lower()
-        file_type = self.SUPPORTED_EXTENSIONS.get(ext, "unknown")
+        file_type = self.supported_extensions.get(ext, "unknown")
 
         try:
             if file_type == "docx":
@@ -94,6 +114,8 @@ class DocumentTextExtractor:
                 return self._extract_pdf(path, file_size)
             elif file_type == "html":
                 return self._extract_html(path, file_size)
+            elif file_type == "rtf":
+                return self._extract_rtf(path, file_size)
             elif file_type in ("text", "markdown"):
                 return self._extract_plain_text(path, file_type, file_size)
             else:
@@ -268,6 +290,104 @@ class DocumentTextExtractor:
             file_path=path,
             file_name=path.name,
             file_type=file_type,
+            text_snippet=snippet,
+            file_size_bytes=file_size,
+        )
+
+    def _extract_rtf(self, path: Path, file_size: int) -> ExtractedDocument:
+        """Extracts clean plain text from an RTF document by removing markup and control words."""
+        raw_bytes = path.read_bytes()
+        raw_text = ""
+        for encoding in ("utf-8", "latin-1", "cp1252", "ascii"):
+            try:
+                raw_text = raw_bytes.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+
+        pattern = re.compile(
+            r"\\([a-z]{1,32})(-?\d+)? ?|\\\'([0-9a-f]{2})|\\([^a-z])|([{}])|[\r\n]+|(.)",
+            re.I,
+        )
+        destinations_to_skip = {
+            "fonttbl", "colortbl", "stylesheet", "info", "pict", "header", "footer",
+            "author", "operator", "generator", "keywords", "comment", "title", "subject",
+        }
+
+        stack: list[bool] = []
+        ignorable = False
+        just_opened_group = False
+        ucskip = 1
+        curskip = 0
+        out: list[str] = []
+
+        for match in pattern.finditer(raw_text):
+            word, arg, hex_char, char, brace, raw_char = match.groups()
+            if brace:
+                curskip = 0
+                if brace == "{":
+                    stack.append(ignorable)
+                    just_opened_group = True
+                elif brace == "}":
+                    just_opened_group = False
+                    if stack:
+                        ignorable = stack.pop()
+            elif char:
+                curskip = 0
+                if char == "*" and just_opened_group:
+                    ignorable = True
+                elif not ignorable:
+                    out.append(char)
+                just_opened_group = False
+            elif word:
+                curskip = 0
+                word_lower = word.lower()
+                if word_lower in destinations_to_skip:
+                    ignorable = True
+                elif word_lower == "bin":
+                    pass
+                elif word_lower in ("par", "line"):
+                    if not ignorable:
+                        out.append("\n")
+                elif word_lower == "tab":
+                    if not ignorable:
+                        out.append(" ")
+                elif word_lower == "uc":
+                    ucskip = int(arg) if arg else 1
+                elif word_lower == "u":
+                    c = int(arg) if arg else 0
+                    if c < 0:
+                        c += 0x10000
+                    if not ignorable:
+                        out.append(chr(c))
+                    curskip = ucskip
+                just_opened_group = False
+            elif hex_char:
+                just_opened_group = False
+                if curskip > 0:
+                    curskip -= 1
+                elif not ignorable:
+                    try:
+                        c = bytes.fromhex(hex_char).decode("cp1252", errors="replace")
+                        out.append(c)
+                    except Exception:
+                        pass
+            elif raw_char:
+                just_opened_group = False
+                if curskip > 0:
+                    curskip -= 1
+                elif not ignorable:
+                    out.append(raw_char)
+
+        clean_text = "".join(out)
+        clean_text = re.sub(r"[ \t]+", " ", clean_text)
+        clean_text = re.sub(r"\n\s*\n+", "\n\n", clean_text)
+        snippet = self._truncate(clean_text)
+
+        return ExtractedDocument(
+            file_path=path,
+            file_name=path.name,
+            file_type="rtf",
             text_snippet=snippet,
             file_size_bytes=file_size,
         )

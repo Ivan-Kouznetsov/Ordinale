@@ -1,0 +1,25 @@
+# Ordinale Default Configuration
+# This file defines the default settings for scanning and organizing documents.
+
+[scanner]
+# List of file extensions that Ordinale will discover and process.
+# Extensions are case-insensitive and leading dots are optional.
+extensions = [
+    ".docx",
+    ".pdf",
+    ".html",
+    ".htm",
+    ".mhtml",
+    ".txt",
+    ".md",
+    ".markdown",
+    ".rtf",
+]
+
+[scanner.custom_types]
+# Optional mapping of custom file extensions to supported parser types:
+# Supported parsers: "docx", "pdf", "html", "text", "markdown", "rtf"
+".markdown" = "markdown"
+".htm" = "html"
+".mhtml" = "html"
+".rtf" = "rtf"

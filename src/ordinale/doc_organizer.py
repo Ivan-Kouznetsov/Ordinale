@@ -11,6 +11,14 @@ import json
 from pathlib import Path
 import sys
 from typing import List, Optional
+import warnings
+
+# Suppress known upstream Laya checkpoint temperature calibration warning
+warnings.filterwarnings(
+    "ignore",
+    message=r".*checkpoint ships invalid temperatures.*",
+    category=RuntimeWarning,
+)
 
 from rich.console import Console
 from rich.panel import Panel
@@ -26,6 +34,7 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
 
+from ordinale.config import load_settings, normalize_extension
 from ordinale.doc_classifier import CudaDeviceError, DocumentClassifier
 from ordinale.extractor import DocumentTextExtractor
 from ordinale.organizer_engine import OrganizerEngine, OrganizationPlan
@@ -137,14 +146,22 @@ def run_scan_and_organize(
     recursive: bool = True,
     max_workers: Optional[int] = None,
     preserve_folders: bool = True,
+    extensions: Optional[List[str]] = None,
 ) -> None:
     """Scans directory, displays preview, and executes moves if requested."""
     scan_mode = "recursively" if recursive else "top-level only"
     console.rule(f"[bold cyan]Scanning '{source_dir}' for Documents ({scan_mode})[/bold cyan]")
 
-    files = engine.scan_directory(source_dir, recursive=recursive, exclude_dirs=[target_root])
+    files = engine.scan_directory(
+        source_dir,
+        recursive=recursive,
+        exclude_dirs=[target_root],
+        extensions=extensions,
+    )
     if not files:
-        console.print(f"[yellow]No supported document files (.docx, .pdf, .html, .txt, .md) found in '{source_dir}'.[/yellow]")
+        exts_list = sorted(list(engine.extractor.supported_extensions.keys()))
+        exts_str = ", ".join(exts_list)
+        console.print(f"[yellow]No supported document files ({exts_str}) found in '{source_dir}'.[/yellow]")
         return
 
     workers_desc = f"{max_workers} worker(s)" if max_workers else "auto parallel workers"
@@ -373,8 +390,36 @@ def main() -> None:
         action="store_true",
         help="Force full offline mode (reads directly from local cache without checking HuggingFace Hub).",
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to settings file (.toml or .json).",
+    )
+    parser.add_argument(
+        "--extensions",
+        type=str,
+        default=None,
+        help="Comma-separated list of file extensions to scan (e.g. '.pdf,.docx,.txt').",
+    )
 
     args = parser.parse_args()
+
+    # Load settings from config file if found/specified
+    try:
+        settings = load_settings(config_path=args.config)
+    except Exception as err:
+        console.print(f"[bold red]Configuration Error:[/] {err}")
+        sys.exit(1)
+
+    # CLI flag overrides configured extensions
+    if args.extensions:
+        parsed_exts = [
+            normalize_extension(e)
+            for e in args.extensions.split(",")
+            if normalize_extension(e)
+        ]
+        settings.scanner.extensions = parsed_exts
 
     # Default action if nothing specified
     if not (args.samples or args.scan or args.undo):
@@ -383,7 +428,7 @@ def main() -> None:
     # If running undo without loading model
     if args.undo:
         target_dir = Path(args.target) if args.target else Path("Organized_Documents")
-        engine = OrganizerEngine()
+        engine = OrganizerEngine(settings=settings)
         run_undo(engine, target_dir)
         return
 
@@ -400,7 +445,7 @@ def main() -> None:
             console.print("[yellow]Exiting immediately without falling back to CPU because CUDA was specified.[/yellow]")
         sys.exit(1)
 
-    engine = OrganizerEngine(classifier=classifier)
+    engine = OrganizerEngine(classifier=classifier, settings=settings)
 
     try:
         if args.samples:
