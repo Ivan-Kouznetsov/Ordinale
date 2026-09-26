@@ -85,6 +85,139 @@ class ScannerConfig:
 
 
 @dataclass
+class CourseCodeHeuristicsConfig:
+    """Heuristic settings for detecting and scoring course codes."""
+
+    pattern: str = r"\b[A-Za-z]{2,4}[\s:\-]?\d{3,4}[A-Za-z]?\b"
+    common_prefixes: List[str] = field(
+        default_factory=lambda: [
+            "cs", "comp", "it", "swe", "cis", "se", "ds",
+            "math", "stat", "phys", "chem", "bio", "biol",
+            "eng", "engl", "hist", "econ", "psyc", "psych",
+            "phil", "poli", "posc", "soc", "anth", "comm",
+            "bus", "mgmt", "fin", "acct", "mktg", "art",
+            "mus", "span", "fren", "germ", "chin", "lang",
+            "med", "nurs", "law", "ed", "educ", "geog",
+            "geol", "astr", "ee", "ece", "me", "ce", "che",
+            "is", "inf", "sci", "lit", "ling", "arch", "env",
+        ]
+    )
+    non_course_prefixes: List[str] = field(
+        default_factory=lambda: [
+            "year", "tax", "date", "line", "page", "item", "rule", "step", "room",
+            "form", "part", "chap", "total", "fund", "suite", "apt", "unit", "post",
+            "bill", "acct", "card", "call", "code", "dial", "dept", "dest", "rate",
+            "file", "stat", "view", "cost", "plus", "paid", "fees", "gain", "loss",
+            "note", "text", "term", "type", "user", "time", "hour", "mins", "secs",
+        ]
+    )
+    proximity_window_lines: int = 3
+    base_weight: float = 3.0
+    common_prefix_bonus: float = 1.0
+    uncommon_prefix_penalty: float = 1.5
+    proximity_name_bonus: float = 1.0
+    proximity_title_bonus: float = 1.0
+    isolated_penalty: float = 1.0
+
+
+@dataclass
+class EducationAcademicHeuristicsConfig:
+    """Heuristic settings for education and academic disambiguation."""
+
+    course_codes: CourseCodeHeuristicsConfig = field(default_factory=CourseCodeHeuristicsConfig)
+    coursework_terms: List[str] = field(
+        default_factory=lambda: [
+            "homework",
+            "problem set",
+            "assignment",
+            "lab report",
+            "lab section",
+            "course syllabus",
+            "syllabus",
+            "professor",
+            "due date",
+            "student id",
+            "student name",
+            "essay draft",
+            "term paper",
+            "term project",
+            "midterm",
+            "final exam",
+            "class notes",
+            "proposal",
+            "project proposal",
+        ]
+    )
+    preprint_servers: List[str] = field(
+        default_factory=lambda: [
+            "arxiv",
+            "biorxiv",
+            "medrxiv",
+            "chemrxiv",
+            "ssrn",
+            "research square",
+            "zenodo",
+            "osf.io",
+            "techrxiv",
+        ]
+    )
+    journal_publishers: List[str] = field(
+        default_factory=lambda: [
+            "ieee",
+            "acm",
+            "springer",
+            "elsevier",
+            "nature",
+            "science",
+            "plos",
+            "pnas",
+            "pubmed",
+            "wiley",
+            "cell press",
+            "taylor & francis",
+            "frontiers in",
+            "mdpi",
+            "iop publishing",
+            "acm sig",
+            "ieee trans",
+        ]
+    )
+    academic_publication_patterns: List[str] = field(
+        default_factory=lambda: [
+            r"\bdoi:\s*10\.\d{4,9}/",
+            r"\bproceedings of\b",
+            r"\bjournal of\b",
+            r"\btransactions on\b",
+            r"\bconference on\b",
+            r"\bsymposium on\b",
+            r"\bannual meeting of\b",
+            r"\bpeer-reviewed\b",
+            r"\bet al\.\b",
+            r"\bbibliography\b",
+        ]
+    )
+    coursework_term_weight: float = 1.5
+    coursework_term_max_score: float = 4.0
+    preprint_weight: float = 3.5
+    journal_weight: float = 2.5
+    academic_marker_weight: float = 1.5
+    academic_marker_max_score: float = 3.0
+    format_prior_pdf: float = 1.5
+    format_prior_school: float = 1.5
+
+
+@dataclass
+class HeuristicsConfig:
+    """Root container for heuristic rules and scoring."""
+
+    record_signals: bool = True
+    detailed_signals: bool = False
+    education_academic: EducationAcademicHeuristicsConfig = field(
+        default_factory=EducationAcademicHeuristicsConfig
+    )
+
+
+@dataclass
 class ModelConfig:
     """Model and offline detection configuration options."""
 
@@ -99,11 +232,16 @@ class Settings:
 
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
+    heuristics: HeuristicsConfig = field(default_factory=HeuristicsConfig)
 
 
 def get_default_settings() -> Settings:
     """Returns a Settings instance with default values."""
-    return Settings(scanner=ScannerConfig(), model=ModelConfig())
+    return Settings(
+        scanner=ScannerConfig(),
+        model=ModelConfig(),
+        heuristics=HeuristicsConfig(),
+    )
 
 
 def find_settings_file(
@@ -204,12 +342,118 @@ def _parse_dict_to_settings(data: Dict[str, Any]) -> Settings:
         offline=str(model_data.get("offline", "auto")),
     )
 
+    heuristics_data = data.get("heuristics", {})
+    if not isinstance(heuristics_data, dict):
+        heuristics_data = {}
+
+    edu_data = heuristics_data.get("education_academic", {})
+    if not isinstance(edu_data, dict):
+        edu_data = {}
+
+    course_data = edu_data.get("course_codes", {})
+    if not isinstance(course_data, dict):
+        course_data = {}
+
+    default_course = CourseCodeHeuristicsConfig()
+    course_cfg = CourseCodeHeuristicsConfig(
+        pattern=str(course_data.get("pattern", default_course.pattern)),
+        common_prefixes=[
+            str(x).strip().lower()
+            for x in course_data.get("common_prefixes", default_course.common_prefixes)
+            if str(x).strip()
+        ],
+        non_course_prefixes=[
+            str(x).strip().lower()
+            for x in course_data.get("non_course_prefixes", default_course.non_course_prefixes)
+            if str(x).strip()
+        ],
+        proximity_window_lines=int(
+            course_data.get("proximity_window_lines", default_course.proximity_window_lines)
+        ),
+        base_weight=float(course_data.get("base_weight", default_course.base_weight)),
+        common_prefix_bonus=float(
+            course_data.get("common_prefix_bonus", default_course.common_prefix_bonus)
+        ),
+        uncommon_prefix_penalty=float(
+            course_data.get("uncommon_prefix_penalty", default_course.uncommon_prefix_penalty)
+        ),
+        proximity_name_bonus=float(
+            course_data.get("proximity_name_bonus", default_course.proximity_name_bonus)
+        ),
+        proximity_title_bonus=float(
+            course_data.get("proximity_title_bonus", default_course.proximity_title_bonus)
+        ),
+        isolated_penalty=float(
+            course_data.get("isolated_penalty", default_course.isolated_penalty)
+        ),
+    )
+
+    default_edu = EducationAcademicHeuristicsConfig()
+    edu_cfg = EducationAcademicHeuristicsConfig(
+        course_codes=course_cfg,
+        coursework_terms=[
+            str(x) for x in edu_data.get("coursework_terms", default_edu.coursework_terms)
+        ],
+        preprint_servers=[
+            str(x).strip().lower()
+            for x in edu_data.get("preprint_servers", default_edu.preprint_servers)
+            if str(x).strip()
+        ],
+        journal_publishers=[
+            str(x).strip().lower()
+            for x in edu_data.get("journal_publishers", default_edu.journal_publishers)
+            if str(x).strip()
+        ],
+        academic_publication_patterns=[
+            str(x)
+            for x in edu_data.get(
+                "academic_publication_patterns", default_edu.academic_publication_patterns
+            )
+        ],
+        coursework_term_weight=float(
+            edu_data.get("coursework_term_weight", default_edu.coursework_term_weight)
+        ),
+        coursework_term_max_score=float(
+            edu_data.get("coursework_term_max_score", default_edu.coursework_term_max_score)
+        ),
+        preprint_weight=float(
+            edu_data.get("preprint_weight", default_edu.preprint_weight)
+        ),
+        journal_weight=float(
+            edu_data.get("journal_weight", default_edu.journal_weight)
+        ),
+        academic_marker_weight=float(
+            edu_data.get("academic_marker_weight", default_edu.academic_marker_weight)
+        ),
+        academic_marker_max_score=float(
+            edu_data.get("academic_marker_max_score", default_edu.academic_marker_max_score)
+        ),
+        format_prior_pdf=float(
+            edu_data.get("format_prior_pdf", default_edu.format_prior_pdf)
+        ),
+        format_prior_school=float(
+            edu_data.get("format_prior_school", default_edu.format_prior_school)
+        ),
+    )
+
+    default_heuristics = HeuristicsConfig()
+    heuristics_cfg = HeuristicsConfig(
+        record_signals=bool(
+            heuristics_data.get("record_signals", default_heuristics.record_signals)
+        ),
+        detailed_signals=bool(
+            heuristics_data.get("detailed_signals", default_heuristics.detailed_signals)
+        ),
+        education_academic=edu_cfg,
+    )
+
     return Settings(
         scanner=ScannerConfig(
             extensions=extensions,
             custom_types=custom_types,
         ),
         model=model_cfg,
+        heuristics=heuristics_cfg,
     )
 
 

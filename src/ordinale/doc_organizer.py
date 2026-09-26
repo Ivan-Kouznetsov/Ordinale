@@ -445,7 +445,11 @@ def main() -> None:
 
     # Load classifier
     try:
-        classifier = DocumentClassifier(device=args.device, offline=offline_mode)
+        classifier = DocumentClassifier(
+            device=args.device,
+            offline=offline_mode,
+            settings=settings,
+        )
     except (CudaDeviceError, RuntimeError) as err:
         console.print(f"[bold red]Device Error:[/] {err}")
         if args.device and "cuda" in str(args.device).lower():

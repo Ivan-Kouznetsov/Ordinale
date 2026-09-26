@@ -11,8 +11,14 @@ import os
 from pathlib import Path
 import re
 import time
-from typing import Any, Dict, List, Optional, Union
 import warnings
+
+from ordinale.config import (
+    CourseCodeHeuristicsConfig,
+    EducationAcademicHeuristicsConfig,
+    HeuristicsConfig,
+    Settings,
+)
 
 # Disable symlinks on Windows to prevent WinError 1314 when running without Admin/Developer mode
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
@@ -178,34 +184,163 @@ COMMON_NON_COURSE_PREFIXES = {
 }
 
 
-def is_valid_course_code(code_str: str) -> bool:
+NAME_PROXIMITY_PATTERN = re.compile(
+    r"(?i)\b(student(\s+name)?|author|by|instructor|professor|teacher|advisor)\b[:\s]+[A-Za-z]"
+)
+TITLE_PROXIMITY_PATTERN = re.compile(
+    r"(?i)\b(title|essay|paper|project|assignment|report|lab|thesis|dissertation)\b[:\s]+[A-Za-z]"
+)
+
+
+def is_valid_course_code(
+    code_str: str,
+    config: Optional[CourseCodeHeuristicsConfig] = None,
+) -> bool:
     """Validates that a regex match is an actual university/school course code and not a date or invoice line."""
     m = re.match(r"^([A-Za-z]{2,4})[\s:\-]?(\d{3,4})([A-Za-z]?)$", code_str.strip())
     if not m:
         return False
     prefix = m.group(1).lower()
     num = m.group(2)
-    if prefix in COMMON_NON_COURSE_PREFIXES:
+    non_course_prefixes = (
+        set(config.non_course_prefixes) if config else COMMON_NON_COURSE_PREFIXES
+    )
+    if prefix in non_course_prefixes:
         return False
-    if num.startswith(("19", "20")) and prefix not in {
-        "cs", "math", "phys", "chem", "bio", "eng", "hist", "stat", "econ", "psych"
-    }:
+    common_prefixes = (
+        set(config.common_prefixes)
+        if config
+        else {"cs", "comp", "it", "swe", "math", "phys", "chem", "bio", "eng", "hist", "stat", "econ", "psych"}
+    )
+    if num.startswith(("19", "20")) and prefix not in common_prefixes:
         return False
     return True
+
+
+def evaluate_course_codes(
+    prompt_text: str,
+    config: Optional[CourseCodeHeuristicsConfig] = None,
+) -> Dict[str, Any]:
+    """Detects and scores candidate course codes with common-prefix and proximity heuristics."""
+    if config is None:
+        config = CourseCodeHeuristicsConfig()
+
+    pattern = re.compile(config.pattern, re.IGNORECASE)
+    lines = prompt_text.splitlines()
+
+    candidates: List[Dict[str, Any]] = []
+    seen_codes = set()
+
+    for line_idx, line in enumerate(lines):
+        for m in pattern.finditer(line):
+            code_str = m.group(0).strip()
+            norm_code = code_str.upper()
+            if not is_valid_course_code(code_str, config):
+                continue
+            if norm_code in seen_codes:
+                continue
+            seen_codes.add(norm_code)
+
+            match_prefix = re.match(r"^([A-Za-z]{2,4})", code_str)
+            if not match_prefix:
+                continue
+            prefix = match_prefix.group(1).lower()
+            is_common = prefix in config.common_prefixes
+
+            # Context window around the matched line
+            win_start = max(0, line_idx - config.proximity_window_lines)
+            win_end = min(len(lines), line_idx + config.proximity_window_lines + 1)
+            window_lines = lines[win_start:win_end]
+
+            near_name = any(NAME_PROXIMITY_PATTERN.search(ln) for ln in window_lines)
+            near_title = any(
+                TITLE_PROXIMITY_PATTERN.search(ln)
+                or ln.strip().startswith(("# ", "## ", "### "))
+                or (ln.strip().startswith(('"', "“")) and ln.strip().endswith(('"', "”")))
+                for ln in window_lines
+            )
+
+            # Header metadata checks (e.g. if Title: or Author: appears in first 8 lines)
+            if line_idx <= 8:
+                for top_ln in lines[:8]:
+                    top_lower = top_ln.lower()
+                    if top_lower.startswith("author:") or top_lower.startswith("student:"):
+                        near_name = True
+                    if top_lower.startswith("title:"):
+                        near_title = True
+
+            isolated = not (near_name or near_title)
+
+            # Scoring calculation
+            score = config.base_weight
+            details: List[str] = []
+
+            if is_common:
+                score += config.common_prefix_bonus
+                details.append("+common prefix")
+            else:
+                score -= config.uncommon_prefix_penalty
+                details.append("-uncommon prefix")
+
+            if near_name:
+                score += config.proximity_name_bonus
+                details.append("+near name")
+            if near_title:
+                score += config.proximity_title_bonus
+                details.append("+near title")
+            if isolated:
+                score -= config.isolated_penalty
+                details.append("-isolated")
+
+            score = max(0.0, score)
+
+            candidates.append({
+                "code": code_str,
+                "prefix": prefix,
+                "is_common": is_common,
+                "near_name": near_name,
+                "near_title": near_title,
+                "isolated": isolated,
+                "score": round(score, 2),
+                "details": details,
+            })
+
+    if not candidates:
+        return {
+            "valid_codes": [],
+            "candidates": [],
+            "total_score": 0.0,
+        }
+
+    total_score = max(c["score"] for c in candidates)
+    if len(candidates) > 1:
+        total_score += min(2.0, 0.5 * (len(candidates) - 1))
+
+    return {
+        "valid_codes": [c["code"] for c in candidates],
+        "candidates": candidates,
+        "total_score": round(total_score, 2),
+    }
 
 
 def disambiguate_education_academic(
     prompt_text: str,
     file_name: Optional[str] = None,
     file_extension: Optional[str] = None,
+    heuristics: Optional[EducationAcademicHeuristicsConfig] = None,
+    record_signals: bool = True,
+    detailed_signals: bool = False,
 ) -> Dict[str, Any]:
     """Disambiguates between school essays/coursework and academic research papers.
 
     Evaluates:
-      1. Course codes (e.g. CS240, BIO:101, ENGL-102) & coursework terms -> School.
+      1. Course codes & proximity heuristics -> School.
       2. Names of preprint servers (arXiv, bioRxiv, SSRN) & journals/publishers -> Academic.
       3. File format priors: .pdf favors published/prepub academic papers; .docx/.txt favors school coursework.
     """
+    if heuristics is None:
+        heuristics = EducationAcademicHeuristicsConfig()
+
     text_lower = prompt_text.lower()
 
     if not file_name:
@@ -219,46 +354,71 @@ def disambiguate_education_academic(
     score_academic = 0.0
     signals: List[str] = []
 
-    # 1. Course Code Detection (\w{2}(\s|:|-)\d{3,4})
-    course_codes = COURSE_CODE_PATTERN.findall(prompt_text)
-    valid_course_codes = [c for c in course_codes if is_valid_course_code(c)]
+    # 1. Course Code Detection & Proximity Evaluation
+    course_eval = evaluate_course_codes(prompt_text, config=heuristics.course_codes)
+    valid_course_codes = course_eval["valid_codes"]
+    course_code_score = course_eval["total_score"]
+
     if valid_course_codes:
-        score_school += 3.5
-        signals.append(f"Course code: {valid_course_codes[:3]}")
+        score_school += course_code_score
+        if record_signals:
+            if detailed_signals:
+                for c in course_eval["candidates"][:3]:
+                    signals.append(
+                        f"Course code: {c['code']} ({', '.join(c['details'])}, score: {c['score']:.1f})"
+                    )
+            else:
+                signals.append(f"Course code: {valid_course_codes[:3]}")
 
     # Coursework terms
-    coursework_hits = [term for term in COURSEWORK_TERMS if term in text_lower]
+    coursework_hits = [term for term in heuristics.coursework_terms if term in text_lower]
     if coursework_hits:
-        term_weight = min(4.0, len(coursework_hits) * 1.5)
+        term_weight = min(
+            heuristics.coursework_term_max_score,
+            len(coursework_hits) * heuristics.coursework_term_weight,
+        )
         score_school += term_weight
-        signals.append(f"Coursework terms: {coursework_hits[:3]}")
+        if record_signals:
+            signals.append(f"Coursework terms: {coursework_hits[:3]}")
 
     # 2. Preprint servers & Journals
     fn_lower = file_name.lower() if file_name else ""
-    found_preprints = [p for p in PREPRINT_SERVERS if p in text_lower or p in fn_lower]
+    found_preprints = [p for p in heuristics.preprint_servers if p in text_lower or p in fn_lower]
     if found_preprints:
-        score_academic += 3.5
-        signals.append(f"Preprint server: {found_preprints}")
+        score_academic += heuristics.preprint_weight
+        if record_signals:
+            signals.append(f"Preprint server: {found_preprints}")
 
-    found_journals = [j for j in JOURNAL_PUBLISHERS if j in text_lower or j in fn_lower]
+    found_journals = [j for j in heuristics.journal_publishers if j in text_lower or j in fn_lower]
     if found_journals:
-        score_academic += 2.5
-        signals.append(f"Academic publisher/journal: {found_journals}")
+        score_academic += heuristics.journal_weight
+        if record_signals:
+            signals.append(f"Academic publisher/journal: {found_journals}")
 
+    compiled_patterns = [
+        p if hasattr(p, "search") else re.compile(p, re.IGNORECASE)
+        for p in heuristics.academic_publication_patterns
+    ]
     found_academic_markers = [
-        pat.pattern for pat in ACADEMIC_PUBLICATION_PATTERNS if pat.search(prompt_text)
+        pat.pattern for pat in compiled_patterns if pat.search(prompt_text)
     ]
     if found_academic_markers:
-        score_academic += min(3.0, len(found_academic_markers) * 1.5)
-        signals.append(f"Academic markers: {len(found_academic_markers)}")
+        score_academic += min(
+            heuristics.academic_marker_max_score,
+            len(found_academic_markers) * heuristics.academic_marker_weight,
+        )
+        if record_signals:
+            signals.append(f"Academic markers: {len(found_academic_markers)}")
 
     # 3. File format prior
     if ext == ".pdf":
-        score_academic += 1.5
-        signals.append("PDF format prior (+academic)")
+        score_academic += heuristics.format_prior_pdf
+        if record_signals:
+            signals.append("PDF format prior (+academic)")
     elif ext in (".docx", ".doc", ".txt", ".rtf", ".odt", ".md", ".markdown"):
-        score_school += 1.5
-        signals.append(f"{ext} format prior (+school)")
+        score_school += heuristics.format_prior_school
+        if record_signals:
+            signals.append(f"{ext} format prior (+school)")
 
     diff = score_academic - score_school
     p_academic = 1.0 / (1.0 + math.exp(-diff))
@@ -271,6 +431,16 @@ def disambiguate_education_academic(
         winner = "school"
         conf = round(p_school, 4)
 
+    evidence = {
+        "course_codes": valid_course_codes,
+        "course_code_score": round(course_code_score, 2),
+        "course_candidates": course_eval["candidates"],
+        "coursework_hits": coursework_hits,
+        "preprints": found_preprints,
+        "journals": found_journals,
+        "academic_markers": len(found_academic_markers),
+    }
+
     return {
         "winner": winner,
         "confidence": conf,
@@ -278,7 +448,8 @@ def disambiguate_education_academic(
             "academic": round(p_academic, 4),
             "school": round(p_school, 4),
         },
-        "signals": signals,
+        "signals": signals if record_signals else [],
+        "evidence": evidence,
         "scores": {"academic": round(score_academic, 2), "school": round(score_school, 2)},
     }
 
@@ -432,7 +603,20 @@ class DocumentClassifier:
         confidence_threshold: float = 0.55,
         offline: Optional[Union[bool, str]] = "auto",
         model_id: str = DEFAULT_MODEL_ID,
+        settings: Optional[Settings] = None,
+        heuristics: Optional[HeuristicsConfig] = None,
     ) -> None:
+        if settings is not None:
+            self.heuristics = heuristics or settings.heuristics
+            if model_id == DEFAULT_MODEL_ID and settings.model.model_id:
+                model_id = settings.model.model_id
+            if subfolder is None and settings.model.subfolder:
+                subfolder = settings.model.subfolder
+            if offline == "auto" and settings.model.offline:
+                offline = settings.model.offline
+        else:
+            self.heuristics = heuristics or HeuristicsConfig()
+
         self.subfolder = subfolder
         self.model_id = model_id
         self.offline = offline
@@ -602,12 +786,16 @@ class DocumentClassifier:
         education_type = None
 
         # Check for explicit course code or preprint evidence
-        course_codes = [c for c in COURSE_CODE_PATTERN.findall(prompt_text) if is_valid_course_code(c)]
-        has_arxiv = "arxiv" in prompt_text.lower()
+        course_cfg = self.heuristics.education_academic.course_codes
+        course_eval = evaluate_course_codes(prompt_text, config=course_cfg)
+        has_preprints = any(
+            srv in prompt_text.lower()
+            for srv in self.heuristics.education_academic.preprint_servers
+        )
 
         # If unmistakable academic/coursework pattern is present and Laya was uncertain
         if cat_conf < self.confidence_threshold:
-            if course_codes or has_arxiv:
+            if (course_eval["valid_codes"] and course_eval["total_score"] >= 2.0) or has_preprints:
                 cat_winner = "education_academic"
                 cat_conf = 0.90
 
@@ -616,14 +804,27 @@ class DocumentClassifier:
             if fin_conf > cat_conf:
                 cat_conf = round(0.4 * cat_conf + 0.6 * fin_conf, 4)
         elif cat_winner == "education_academic":
-            education_type = disambiguate_education_academic(prompt_text)
+            education_type = disambiguate_education_academic(
+                prompt_text,
+                heuristics=self.heuristics.education_academic,
+                record_signals=self.heuristics.record_signals,
+                detailed_signals=self.heuristics.detailed_signals,
+            )
             target_subfolder = EDUCATION_SUBDESTINATIONS.get(
                 education_type["winner"], "Education & Academic"
             )
             # Calibrate confidence if deterministic evidence is present
-            has_strong_evidence = any(
-                s.startswith("Course code:") or s.startswith("Preprint server:") or s.startswith("Academic markers:")
-                for s in education_type.get("signals", [])
+            evidence = education_type.get("evidence", {})
+            has_strong_evidence = (
+                evidence.get("course_code_score", 0.0) >= 2.0
+                or bool(evidence.get("preprints"))
+                or evidence.get("academic_markers", 0) > 0
+                or any(
+                    s.startswith("Course code:")
+                    or s.startswith("Preprint server:")
+                    or s.startswith("Academic markers:")
+                    for s in education_type.get("signals", [])
+                )
             )
             if has_strong_evidence:
                 edu_conf = education_type["confidence"]

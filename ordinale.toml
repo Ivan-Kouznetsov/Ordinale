@@ -29,3 +29,95 @@ extensions = [
 model_id = "convaiinnovations/laya"
 # Offline mode policy: "auto" (default: uses offline mode if model is cached), "true", or "false"
 offline = "auto"
+
+[heuristics]
+record_signals = true
+detailed_signals = false
+
+[heuristics.education_academic]
+coursework_terms = [
+    "homework",
+    "problem set",
+    "assignment",
+    "lab report",
+    "lab section",
+    "course syllabus",
+    "syllabus",
+    "professor",
+    "due date",
+    "student id",
+    "student name",
+    "essay draft",
+    "term paper",
+    "term project",
+    "midterm",
+    "final exam",
+    "class notes",
+    "proposal",
+    "project proposal",
+]
+preprint_servers = [
+    "arxiv",
+    "biorxiv",
+    "medrxiv",
+    "chemrxiv",
+    "ssrn",
+    "research square",
+    "zenodo",
+    "osf.io",
+    "techrxiv",
+]
+journal_publishers = [
+    "ieee",
+    "acm",
+    "springer",
+    "elsevier",
+    "nature",
+    "science",
+    "plos",
+    "pnas",
+    "pubmed",
+    "wiley",
+    "cell press",
+    "taylor & francis",
+    "frontiers in",
+    "mdpi",
+    "iop publishing",
+    "acm sig",
+    "ieee trans",
+]
+coursework_term_weight = 1.5
+coursework_term_max_score = 4.0
+preprint_weight = 3.5
+journal_weight = 2.5
+academic_marker_weight = 1.5
+academic_marker_max_score = 3.0
+format_prior_pdf = 1.5
+format_prior_school = 1.5
+
+[heuristics.education_academic.course_codes]
+base_weight = 3.0
+common_prefix_bonus = 1.0
+uncommon_prefix_penalty = 1.5
+proximity_name_bonus = 1.0
+proximity_title_bonus = 1.0
+isolated_penalty = 1.0
+proximity_window_lines = 3
+common_prefixes = [
+    "cs", "comp", "it", "swe", "cis", "se", "ds",
+    "math", "stat", "phys", "chem", "bio", "biol",
+    "eng", "engl", "hist", "econ", "psyc", "psych",
+    "phil", "poli", "posc", "soc", "anth", "comm",
+    "bus", "mgmt", "fin", "acct", "mktg", "art",
+    "mus", "span", "fren", "germ", "chin", "lang",
+    "med", "nurs", "law", "ed", "educ", "geog",
+    "geol", "astr", "ee", "ece", "me", "ce", "che",
+    "is", "inf", "sci", "lit", "ling", "arch", "env",
+]
+non_course_prefixes = [
+    "year", "tax", "date", "line", "page", "item", "rule", "step", "room",
+    "form", "part", "chap", "total", "fund", "suite", "apt", "unit", "post",
+    "bill", "acct", "card", "call", "code", "dial", "dept", "dest", "rate",
+    "file", "stat", "view", "cost", "plus", "paid", "fees", "gain", "loss",
+    "note", "text", "term", "type", "user", "time", "hour", "mins", "secs",
+]

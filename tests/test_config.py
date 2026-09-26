@@ -191,3 +191,77 @@ def test_model_config_defaults_and_custom(tmp_path: Path):
     assert loaded.model.model_id == "custom/model"
     assert loaded.model.subfolder == "multilingual"
     assert loaded.model.offline == "true"
+
+
+def test_heuristics_config_defaults():
+    from ordinale.config import (
+        CourseCodeHeuristicsConfig,
+        EducationAcademicHeuristicsConfig,
+        HeuristicsConfig,
+    )
+
+    settings = get_default_settings()
+    assert isinstance(settings.heuristics, HeuristicsConfig)
+    assert settings.heuristics.record_signals is True
+    assert settings.heuristics.detailed_signals is False
+
+    edu = settings.heuristics.education_academic
+    assert isinstance(edu, EducationAcademicHeuristicsConfig)
+    assert "homework" in edu.coursework_terms
+    assert "arxiv" in edu.preprint_servers
+
+    course = edu.course_codes
+    assert isinstance(course, CourseCodeHeuristicsConfig)
+    assert "it" in course.common_prefixes
+    assert "cs" in course.common_prefixes
+    assert "nw" not in course.common_prefixes
+    assert "tax" in course.non_course_prefixes
+
+
+def test_load_heuristics_from_json(tmp_path: Path):
+    config_file = tmp_path / "ordinale.json"
+    data = {
+        "heuristics": {
+            "record_signals": False,
+            "detailed_signals": True,
+            "education_academic": {
+                "course_codes": {
+                    "common_prefixes": ["it", "nw", "eng"],
+                    "proximity_name_bonus": 2.5,
+                },
+                "preprint_servers": ["customarxiv"],
+            },
+        }
+    }
+    config_file.write_text(json.dumps(data), encoding="utf-8")
+    loaded = load_settings(config_path=config_file)
+
+    assert loaded.heuristics.record_signals is False
+    assert loaded.heuristics.detailed_signals is True
+    assert loaded.heuristics.education_academic.course_codes.common_prefixes == ["it", "nw", "eng"]
+    assert loaded.heuristics.education_academic.course_codes.proximity_name_bonus == 2.5
+    assert loaded.heuristics.education_academic.preprint_servers == ["customarxiv"]
+
+
+def test_load_heuristics_from_toml(tmp_path: Path):
+    toml_file = tmp_path / "ordinale.toml"
+    toml_content = """
+[heuristics]
+record_signals = false
+detailed_signals = true
+
+[heuristics.education_academic]
+preprint_servers = ["myarchive"]
+
+[heuristics.education_academic.course_codes]
+common_prefixes = ["it", "swe"]
+common_prefix_bonus = 2.0
+"""
+    toml_file.write_text(toml_content, encoding="utf-8")
+    loaded = load_settings(config_path=toml_file)
+
+    assert loaded.heuristics.record_signals is False
+    assert loaded.heuristics.detailed_signals is True
+    assert loaded.heuristics.education_academic.preprint_servers == ["myarchive"]
+    assert loaded.heuristics.education_academic.course_codes.common_prefixes == ["it", "swe"]
+    assert loaded.heuristics.education_academic.course_codes.common_prefix_bonus == 2.0
