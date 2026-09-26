@@ -253,6 +253,12 @@ def evaluate_course_codes(
             window_lines = lines[win_start:win_end]
 
             near_name = any(NAME_PROXIMITY_PATTERN.search(ln) for ln in window_lines)
+            if not near_name:
+                from ordinale.nlp import DocumentEntityExtractor
+                window_ents = DocumentEntityExtractor().extract_entities("\n".join(window_lines))
+                if window_ents["persons"]:
+                    near_name = True
+
             near_title = any(
                 TITLE_PROXIMITY_PATTERN.search(ln)
                 or ln.strip().startswith(("# ", "## ", "### "))
@@ -420,6 +426,56 @@ def disambiguate_education_academic(
         if record_signals:
             signals.append(f"{ext} format prior (+school)")
 
+    # 4. Front-Page Named Entity & Institution Analysis
+    from ordinale.nlp import DocumentEntityExtractor, DocumentStructuralSegmenter
+
+    names_cfg = getattr(heuristics, "names", None)
+    entity_extractor = DocumentEntityExtractor(
+        university_keywords=names_cfg.university_keywords if names_cfg else None
+    )
+    front_page = DocumentStructuralSegmenter.segment_text(prompt_text)["front_page"]
+    front_signals = entity_extractor.analyze_front_page(front_page, filename=file_name)
+
+    # Person cues (author / student)
+    if front_signals["has_person"]:
+        person_bonus = names_cfg.front_page_person_bonus if names_cfg else 1.5
+        if valid_course_codes or coursework_hits:
+            score_school += person_bonus
+            if record_signals:
+                signals.append(f"Student / Author on front page: {front_signals['persons'][:2]}")
+
+    # Higher education institution / university cues
+    if front_signals["has_university"]:
+        uni_bonus = names_cfg.university_bonus if names_cfg else 1.5
+        if found_academic_markers or found_preprints or found_journals:
+            score_academic += 1.0
+            if record_signals:
+                signals.append(f"Affiliated institution: {front_signals['universities'][:2]}")
+        else:
+            score_school += uni_bonus
+            if record_signals:
+                signals.append(f"Academic institution: {front_signals['universities'][:2]}")
+
+    # Student Header Synergy: Person + (Course code or coursework keyword) + University
+    has_synergy = (
+        front_signals["has_person"]
+        and front_signals["has_university"]
+        and bool(valid_course_codes or coursework_hits)
+    )
+    if has_synergy:
+        synergy_bonus = names_cfg.student_header_synergy_bonus if names_cfg else 2.5
+        score_school += synergy_bonus
+        if record_signals:
+            signals.append("Student header synergy: Person + Course/Coursework + University")
+
+    # Filename entity cues
+    fn_persons = front_signals["filename_data"].get("persons", [])
+    if fn_persons and (valid_course_codes or coursework_hits or any(t in front_signals["filename_data"].get("coursework_terms", []) for t in ("essay", "project", "assignment", "hw", "lab"))):
+        fn_bonus = names_cfg.filename_name_bonus if names_cfg else 1.0
+        score_school += fn_bonus
+        if record_signals:
+            signals.append(f"Filename author/student: {fn_persons[:2]}")
+
     diff = score_academic - score_school
     p_academic = 1.0 / (1.0 + math.exp(-diff))
     p_school = 1.0 - p_academic
@@ -439,6 +495,9 @@ def disambiguate_education_academic(
         "preprints": found_preprints,
         "journals": found_journals,
         "academic_markers": len(found_academic_markers),
+        "persons": front_signals["persons"],
+        "universities": front_signals["universities"],
+        "has_student_synergy": has_synergy,
     }
 
     return {
@@ -470,13 +529,18 @@ def autodetect_device() -> str:
                 test_tensor = torch.zeros(1, device="cuda")
                 del test_tensor
                 return "cuda"
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    "CUDA device detected (%s), but kernel execution failed: %s. Falling back to CPU.",
+                    torch.cuda.get_device_name(0),
+                    e,
+                )
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             return "mps"
     except Exception:
         pass
     return "cpu"
+
 
 
 DEFAULT_MODEL_ID: str = "convaiinnovations/laya"
@@ -793,9 +857,22 @@ class DocumentClassifier:
             for srv in self.heuristics.education_academic.preprint_servers
         )
 
+        from ordinale.nlp import DocumentEntityExtractor, DocumentStructuralSegmenter
+        names_cfg = getattr(self.heuristics.education_academic, "names", None)
+        entity_extractor = DocumentEntityExtractor(
+            university_keywords=names_cfg.university_keywords if names_cfg else None
+        )
+        front_page = DocumentStructuralSegmenter.segment_text(prompt_text)["front_page"]
+        front_signals = entity_extractor.analyze_front_page(front_page)
+        has_student_synergy = (
+            front_signals["has_person"]
+            and front_signals["has_university"]
+            and bool(course_eval["valid_codes"] or any(t in prompt_text.lower() for t in self.heuristics.education_academic.coursework_terms))
+        )
+
         # If unmistakable academic/coursework pattern is present and Laya was uncertain
         if cat_conf < self.confidence_threshold:
-            if (course_eval["valid_codes"] and course_eval["total_score"] >= 2.0) or has_preprints:
+            if (course_eval["valid_codes"] and course_eval["total_score"] >= 2.0) or has_preprints or has_student_synergy:
                 cat_winner = "education_academic"
                 cat_conf = 0.90
 
@@ -819,10 +896,12 @@ class DocumentClassifier:
                 evidence.get("course_code_score", 0.0) >= 2.0
                 or bool(evidence.get("preprints"))
                 or evidence.get("academic_markers", 0) > 0
+                or evidence.get("has_student_synergy", False)
                 or any(
                     s.startswith("Course code:")
                     or s.startswith("Preprint server:")
                     or s.startswith("Academic markers:")
+                    or s.startswith("Student header synergy:")
                     for s in education_type.get("signals", [])
                 )
             )

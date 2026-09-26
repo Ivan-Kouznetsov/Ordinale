@@ -267,6 +267,56 @@ def test_custom_heuristics_override_prefix():
     assert res["evidence"]["course_candidates"][0]["is_common"] is True
 
 
+def test_student_header_synergy_boosts_school_coursework():
+    # Student name + university name + course code on front page
+    prompt = (
+        "File: final_project.pdf\n"
+        "Harvard University\n"
+        "Alice Smith\n"
+        "CS 181 Final Project\n"
+        "December 2024\n"
+        "\n"
+        "Abstract / Introduction: In this project, we explore deep neural networks..."
+    )
+    res = disambiguate_education_academic(prompt, file_name="final_project.pdf")
+
+    assert res["winner"] == "school"
+    assert res["evidence"]["has_student_synergy"] is True
+    assert any("Student header synergy:" in s for s in res["signals"])
+    assert any("Harvard" in u for u in res["evidence"]["universities"])
+    assert any("Alice Smith" in p for p in res["evidence"]["persons"])
+
+
+def test_academic_paper_with_university_affiliation():
+    # Research paper with university affiliation and academic publisher / DOI / proceedings
+    prompt = (
+        "File: paper.pdf\n"
+        "Proceedings of IEEE Conference on Computer Vision\n"
+        "Stanford University\n"
+        "John Miller, Sarah Connor\n"
+        "doi: 10.1109/CVPR.2024.123456\n"
+        "\n"
+        "Abstract: We propose a novel transformer architecture..."
+    )
+    res = disambiguate_education_academic(prompt, file_name="paper.pdf")
+
+    assert res["winner"] == "academic"
+    assert res["evidence"]["has_student_synergy"] is False
+    assert any("Affiliated institution:" in s for s in res["signals"])
+
+
+def test_course_code_proximity_via_nlp_person_without_prefix():
+    # Adjacent line has raw person name 'Alice Smith' without 'Student:' prefix
+    prompt = (
+        "Distributed Systems Term Project\n"
+        "Alice Smith\n"
+        "CS 350\n"
+    )
+    eval_res = evaluate_course_codes(prompt)
+    assert len(eval_res["candidates"]) > 0
+    assert eval_res["candidates"][0]["near_name"] is True
+
+
 
 @patch("laya.load")
 def test_classify_mocked_low_confidence(mock_load):

@@ -121,10 +121,42 @@ class CourseCodeHeuristicsConfig:
 
 
 @dataclass
+class NLPHeuristicsConfig:
+    """Settings for spaCy NLP preprocessing and entity extraction."""
+
+    enabled: bool = True
+    model_name: str = "en_core_web_sm"
+
+
+@dataclass
+class NameHeuristicsConfig:
+    """Heuristic settings for person names and institutional/university cues."""
+
+    front_page_person_bonus: float = 1.5
+    university_bonus: float = 1.5
+    student_header_synergy_bonus: float = 2.5
+    filename_name_bonus: float = 1.0
+    university_keywords: List[str] = field(
+        default_factory=lambda: [
+            "university",
+            "college",
+            "institute of technology",
+            "polytechnic",
+            "faculty of",
+            "department of",
+            "school of",
+            "academy",
+            "campus",
+        ]
+    )
+
+
+@dataclass
 class EducationAcademicHeuristicsConfig:
     """Heuristic settings for education and academic disambiguation."""
 
     course_codes: CourseCodeHeuristicsConfig = field(default_factory=CourseCodeHeuristicsConfig)
+    names: NameHeuristicsConfig = field(default_factory=NameHeuristicsConfig)
     coursework_terms: List[str] = field(
         default_factory=lambda: [
             "homework",
@@ -212,6 +244,7 @@ class HeuristicsConfig:
 
     record_signals: bool = True
     detailed_signals: bool = False
+    nlp: NLPHeuristicsConfig = field(default_factory=NLPHeuristicsConfig)
     education_academic: EducationAcademicHeuristicsConfig = field(
         default_factory=EducationAcademicHeuristicsConfig
     )
@@ -389,8 +422,33 @@ def _parse_dict_to_settings(data: Dict[str, Any]) -> Settings:
     )
 
     default_edu = EducationAcademicHeuristicsConfig()
+    names_data = edu_data.get("names", {})
+    if not isinstance(names_data, dict):
+        names_data = {}
+    default_names = NameHeuristicsConfig()
+    names_cfg = NameHeuristicsConfig(
+        front_page_person_bonus=float(
+            names_data.get("front_page_person_bonus", default_names.front_page_person_bonus)
+        ),
+        university_bonus=float(
+            names_data.get("university_bonus", default_names.university_bonus)
+        ),
+        student_header_synergy_bonus=float(
+            names_data.get("student_header_synergy_bonus", default_names.student_header_synergy_bonus)
+        ),
+        filename_name_bonus=float(
+            names_data.get("filename_name_bonus", default_names.filename_name_bonus)
+        ),
+        university_keywords=[
+            str(x).strip().lower()
+            for x in names_data.get("university_keywords", default_names.university_keywords)
+            if str(x).strip()
+        ],
+    )
+
     edu_cfg = EducationAcademicHeuristicsConfig(
         course_codes=course_cfg,
+        names=names_cfg,
         coursework_terms=[
             str(x) for x in edu_data.get("coursework_terms", default_edu.coursework_terms)
         ],
@@ -436,6 +494,15 @@ def _parse_dict_to_settings(data: Dict[str, Any]) -> Settings:
         ),
     )
 
+    nlp_data = heuristics_data.get("nlp", {})
+    if not isinstance(nlp_data, dict):
+        nlp_data = {}
+    default_nlp = NLPHeuristicsConfig()
+    nlp_cfg = NLPHeuristicsConfig(
+        enabled=bool(nlp_data.get("enabled", default_nlp.enabled)),
+        model_name=str(nlp_data.get("model_name", default_nlp.model_name)),
+    )
+
     default_heuristics = HeuristicsConfig()
     heuristics_cfg = HeuristicsConfig(
         record_signals=bool(
@@ -444,6 +511,7 @@ def _parse_dict_to_settings(data: Dict[str, Any]) -> Settings:
         detailed_signals=bool(
             heuristics_data.get("detailed_signals", default_heuristics.detailed_signals)
         ),
+        nlp=nlp_cfg,
         education_academic=edu_cfg,
     )
 

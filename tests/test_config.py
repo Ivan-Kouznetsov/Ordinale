@@ -210,6 +210,15 @@ def test_heuristics_config_defaults():
     assert "homework" in edu.coursework_terms
     assert "arxiv" in edu.preprint_servers
 
+    assert settings.heuristics.nlp.enabled is True
+    assert settings.heuristics.nlp.model_name == "en_core_web_sm"
+
+    names = edu.names
+    assert names.front_page_person_bonus == 1.5
+    assert names.university_bonus == 1.5
+    assert names.student_header_synergy_bonus == 2.5
+    assert "university" in names.university_keywords
+
     course = edu.course_codes
     assert isinstance(course, CourseCodeHeuristicsConfig)
     assert "it" in course.common_prefixes
@@ -265,3 +274,30 @@ common_prefix_bonus = 2.0
     assert loaded.heuristics.education_academic.preprint_servers == ["myarchive"]
     assert loaded.heuristics.education_academic.course_codes.common_prefixes == ["it", "swe"]
     assert loaded.heuristics.education_academic.course_codes.common_prefix_bonus == 2.0
+
+
+def test_load_nlp_and_name_heuristics_custom_toml(tmp_path: Path):
+    toml_file = tmp_path / "ordinale.toml"
+    toml_content = """
+[heuristics.nlp]
+enabled = false
+model_name = "custom_model"
+
+[heuristics.education_academic.names]
+front_page_person_bonus = 3.0
+university_bonus = 2.0
+student_header_synergy_bonus = 4.0
+filename_name_bonus = 2.0
+university_keywords = ["polytechnic", "academy"]
+"""
+    toml_file.write_text(toml_content, encoding="utf-8")
+    loaded = load_settings(config_path=toml_file)
+
+    assert loaded.heuristics.nlp.enabled is False
+    assert loaded.heuristics.nlp.model_name == "custom_model"
+    names = loaded.heuristics.education_academic.names
+    assert names.front_page_person_bonus == 3.0
+    assert names.university_bonus == 2.0
+    assert names.student_header_synergy_bonus == 4.0
+    assert names.filename_name_bonus == 2.0
+    assert names.university_keywords == ["polytechnic", "academy"]

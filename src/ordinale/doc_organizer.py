@@ -458,6 +458,14 @@ def main() -> None:
 
     engine = OrganizerEngine(classifier=classifier, settings=settings)
 
+    device_str = str(getattr(classifier, "device", "cpu")).lower()
+    if "cuda" in device_str:
+        import torch
+        gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "GPU"
+        console.print(f"[dim]Hardware Acceleration:[/] [bold green]CUDA ({gpu_name})[/]")
+    else:
+        console.print(f"[dim]Hardware Acceleration:[/] [bold yellow]{device_str.upper()}[/]")
+
     try:
         if args.samples:
             display_benchmark_samples(classifier, Path(args.samples_file))

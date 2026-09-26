@@ -34,6 +34,10 @@ offline = "auto"
 record_signals = true
 detailed_signals = false
 
+[heuristics.nlp]
+enabled = true
+model_name = "en_core_web_sm"
+
 [heuristics.education_academic]
 coursework_terms = [
     "homework",
@@ -120,4 +124,21 @@ non_course_prefixes = [
     "bill", "acct", "card", "call", "code", "dial", "dept", "dest", "rate",
     "file", "stat", "view", "cost", "plus", "paid", "fees", "gain", "loss",
     "note", "text", "term", "type", "user", "time", "hour", "mins", "secs",
+]
+
+[heuristics.education_academic.names]
+front_page_person_bonus = 1.5
+university_bonus = 1.5
+student_header_synergy_bonus = 2.5
+filename_name_bonus = 1.0
+university_keywords = [
+    "university",
+    "college",
+    "institute of technology",
+    "polytechnic",
+    "faculty of",
+    "department of",
+    "school of",
+    "academy",
+    "campus",
 ]

@@ -278,11 +278,14 @@ ordinale --scan "./documents" --target "./organized" --device cuda
 ```
 
 ### 2. Install PyTorch with CUDA Support
-Standard `pip install torch` from PyPI often defaults to CPU-only wheels on Windows and Linux. To run on CUDA, you must install PyTorch with the CUDA wheel matching your installed NVIDIA driver:
+Standard `pip install torch` from PyPI often defaults to CPU-only wheels on Windows and Linux. To run on CUDA, you must install PyTorch with the CUDA wheel matching your installed NVIDIA driver and GPU architecture:
 
 ```bash
-# Recommended for CUDA 12.4 (Modern GPUs / Drivers 550+):
-pip install torch --index-url https://download.pytorch.org/whl/cu124
+# Recommended for CUDA 13.2 (RTX 50-series Blackwell / Compute Capability 12.0+ / Drivers 590+):
+pip install torch --index-url https://download.pytorch.org/whl/cu132
+
+# For CUDA 12.4 / 12.6 (RTX 40-series / 30-series / Drivers 550+):
+pip install torch --index-url https://download.pytorch.org/whl/cu126
 
 # For CUDA 12.1:
 pip install torch --index-url https://download.pytorch.org/whl/cu121
@@ -290,6 +293,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cu121
 # For CUDA 11.8 (Legacy GPUs / Older Drivers):
 pip install torch --index-url https://download.pytorch.org/whl/cu118
 ```
+
 
 ### 3. Verify CUDA in Python
 To verify that PyTorch detects your NVIDIA GPU correctly:

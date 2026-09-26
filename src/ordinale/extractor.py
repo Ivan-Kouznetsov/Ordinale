@@ -24,11 +24,16 @@ class ExtractedDocument:
     metadata: Dict[str, Any] = field(default_factory=dict)
     file_size_bytes: int = 0
     extraction_error: Optional[str] = None
+    front_page_text: str = ""
+    clean_filename: str = ""
+    nlp_entities: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def prompt_text(self) -> str:
         """Formats filename, metadata, and extracted snippet for Laya input."""
         parts = [f"File: {self.file_name}"]
+        if self.clean_filename and self.clean_filename != Path(self.file_name).stem:
+            parts.append(f"Clean Title: {self.clean_filename}")
         if self.metadata.get("title"):
             parts.append(f"Title: {self.metadata['title']}")
         if self.metadata.get("author"):
@@ -109,17 +114,17 @@ class DocumentTextExtractor:
 
         try:
             if file_type == "docx":
-                return self._extract_docx(path, file_size)
+                doc = self._extract_docx(path, file_size)
             elif file_type == "pdf":
-                return self._extract_pdf(path, file_size)
+                doc = self._extract_pdf(path, file_size)
             elif file_type == "html":
-                return self._extract_html(path, file_size)
+                doc = self._extract_html(path, file_size)
             elif file_type == "rtf":
-                return self._extract_rtf(path, file_size)
+                doc = self._extract_rtf(path, file_size)
             elif file_type in ("text", "markdown"):
-                return self._extract_plain_text(path, file_type, file_size)
+                doc = self._extract_plain_text(path, file_type, file_size)
             else:
-                return ExtractedDocument(
+                doc = ExtractedDocument(
                     file_path=path,
                     file_name=path.name,
                     file_type="binary",
@@ -136,6 +141,14 @@ class DocumentTextExtractor:
                 file_size_bytes=file_size,
                 extraction_error=str(exc),
             )
+
+        from ordinale.nlp import DocumentStructuralSegmenter, FilenamePreprocessor
+
+        doc.clean_filename = FilenamePreprocessor.clean_filename(path.name)
+        if not doc.front_page_text and doc.text_snippet:
+            doc.front_page_text = DocumentStructuralSegmenter.segment_text(doc.text_snippet)["front_page"]
+
+        return doc
 
     def _clean_whitespace(self, text: str) -> str:
         """Normalizes irregular whitespace and collapses excessive blank lines."""
