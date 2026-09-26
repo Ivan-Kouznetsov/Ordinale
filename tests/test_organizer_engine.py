@@ -256,3 +256,33 @@ def test_batch_claimed_targets_same_folder_collision(tmp_path: Path, mock_classi
     # f3 has identical content to f1 -> marked as duplicate of statement.pdf
     assert plans[2].target_path.name == "statement.pdf"
     assert plans[2].is_duplicate is True
+
+
+def test_plan_organization_cancellation_preserves_partial_results(tmp_path: Path, mock_classifier):
+    engine = OrganizerEngine(classifier=mock_classifier)
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    target_root = tmp_path / "organized"
+
+    files = []
+    for i in range(5):
+        f = source_dir / f"doc_{i}.txt"
+        f.write_text(f"Document content {i}", encoding="utf-8")
+        files.append(f)
+
+    # Intercept progress_callback on item 2 to raise KeyboardInterrupt
+    def cancel_on_second(completed, total, file_path):
+        if completed >= 2:
+            raise KeyboardInterrupt()
+
+    plans = engine.plan_organization(
+        files,
+        target_root,
+        max_workers=1,
+        progress_callback=cancel_on_second,
+    )
+
+    assert engine.last_cancelled is True
+    assert len(plans) >= 2
+    assert len(plans) < len(files)
+    assert engine.last_partial_plans == plans

@@ -25,6 +25,7 @@ def test_cli_help(capsys):
     assert "--config" in captured.out
     assert "--offline" in captured.out
     assert "--online" in captured.out
+    assert "--json" in captured.out
     assert "--extensions" not in captured.out
 
 
@@ -121,3 +122,139 @@ def test_cli_default_auto_offline(mock_display, mock_classifier, mock_is_cached)
     assert mock_classifier.called
     _, kwargs = mock_classifier.call_args
     assert kwargs.get("offline") == "auto"
+
+
+def test_cli_json_arg_passed(tmp_path: Path):
+    with patch("ordinale.doc_organizer.DocumentClassifier"), \
+         patch("ordinale.doc_organizer.run_scan_and_organize") as mock_scan:
+        with patch("sys.argv", ["doc_organizer.py", "--scan", str(tmp_path), "--json"]):
+            main()
+        assert mock_scan.called
+        assert mock_scan.call_args[1]["json_output"] == "-"
+
+        with patch("sys.argv", ["doc_organizer.py", "--scan", str(tmp_path), "--json", "report.json"]):
+            main()
+        assert mock_scan.call_args[1]["json_output"] == "report.json"
+
+
+def test_run_scan_and_organize_json_stdout(capsys, tmp_path: Path):
+    import json
+    from ordinale.doc_organizer import run_scan_and_organize
+    from ordinale.organizer_engine import OrganizationPlan, OrganizerEngine
+
+    doc_file = tmp_path / "test.txt"
+    doc_file.write_text("Test content", encoding="utf-8")
+    target_dir = tmp_path / "target"
+
+    mock_engine = MagicMock(spec=OrganizerEngine)
+    mock_engine.scan_directory.return_value = [doc_file]
+    mock_plan = OrganizationPlan(
+        source_path=doc_file,
+        target_path=target_dir / "Notes" / "test.txt",
+        file_sha256="abc123",
+        category="scratch_notes",
+        subcategory=None,
+        confidence=0.95,
+        retention="Ephemeral",
+        is_sensitive=False,
+        action="AUTO_MOVE",
+        reason="Test match",
+    )
+    mock_engine.plan_organization.return_value = [mock_plan]
+    mock_engine.last_cancelled = False
+
+    run_scan_and_organize(
+        engine=mock_engine,
+        source_dir=tmp_path,
+        target_root=target_dir,
+        json_output="-",
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["status"] == "completed"
+    assert payload["cancelled"] is False
+    assert payload["analyzed_count"] == 1
+    assert payload["plans"][0]["category"] == "scratch_notes"
+
+
+def test_run_scan_and_organize_json_file(tmp_path: Path):
+    import json
+    from ordinale.doc_organizer import run_scan_and_organize
+    from ordinale.organizer_engine import OrganizationPlan, OrganizerEngine
+
+    doc_file = tmp_path / "test.txt"
+    doc_file.write_text("Test content", encoding="utf-8")
+    target_dir = tmp_path / "target"
+    out_json = tmp_path / "results.json"
+
+    mock_engine = MagicMock(spec=OrganizerEngine)
+    mock_engine.scan_directory.return_value = [doc_file]
+    mock_plan = OrganizationPlan(
+        source_path=doc_file,
+        target_path=target_dir / "Notes" / "test.txt",
+        file_sha256="abc123",
+        category="scratch_notes",
+        subcategory=None,
+        confidence=0.95,
+        retention="Ephemeral",
+        is_sensitive=False,
+        action="AUTO_MOVE",
+        reason="Test match",
+    )
+    mock_engine.plan_organization.return_value = [mock_plan]
+    mock_engine.last_cancelled = False
+
+    run_scan_and_organize(
+        engine=mock_engine,
+        source_dir=tmp_path,
+        target_root=target_dir,
+        json_output=str(out_json),
+    )
+
+    assert out_json.is_file()
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    assert payload["status"] == "completed"
+    assert payload["analyzed_count"] == 1
+
+
+def test_run_scan_and_organize_cancellation_json(capsys, tmp_path: Path):
+    import json
+    from ordinale.doc_organizer import run_scan_and_organize
+    from ordinale.organizer_engine import OrganizationPlan, OrganizerEngine
+
+    doc_file = tmp_path / "test.txt"
+    target_dir = tmp_path / "target"
+
+    mock_engine = MagicMock(spec=OrganizerEngine)
+    mock_engine.scan_directory.return_value = [doc_file]
+    mock_plan = OrganizationPlan(
+        source_path=doc_file,
+        target_path=target_dir / "Notes" / "test.txt",
+        file_sha256="abc123",
+        category="scratch_notes",
+        subcategory=None,
+        confidence=0.95,
+        retention="Ephemeral",
+        is_sensitive=False,
+        action="AUTO_MOVE",
+        reason="Test match",
+    )
+    # Simulate interrupt inside plan_organization
+    mock_engine.plan_organization.side_effect = KeyboardInterrupt
+    mock_engine.last_partial_plans = [mock_plan]
+    mock_engine.last_cancelled = True
+
+    run_scan_and_organize(
+        engine=mock_engine,
+        source_dir=tmp_path,
+        target_root=target_dir,
+        json_output="-",
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["status"] == "cancelled"
+    assert payload["cancelled"] is True
+    assert payload["analyzed_count"] == 1
+    assert "Scan cancelled by user" in payload["message"]
