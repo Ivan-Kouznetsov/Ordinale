@@ -262,7 +262,6 @@ def run_scan_and_organize(
         header_style="bold magenta",
         show_lines=True,
     )
-    table.add_column("#", justify="right", width=4)
     table.add_column("Source Document", style="bold", width=30)
     table.add_column("Predicted Destination", style="cyan", width=36)
     table.add_column("Confidence", justify="center", width=12)
@@ -270,7 +269,7 @@ def run_scan_and_organize(
     table.add_column("Sensitive", justify="center", width=11)
     table.add_column("Status / Action", style="yellow", width=18)
 
-    for idx, plan in enumerate(plans, 1):
+    for plan in plans:
         try:
             rel_target = plan.target_path.relative_to(target_root)
         except ValueError:
@@ -295,7 +294,6 @@ def run_scan_and_organize(
             status = "[green]MOVE[/]"
 
         table.add_row(
-            str(idx),
             str(rel_source),
             str(rel_target),
             f"[{conf_style}]{conf_str}[/]",
