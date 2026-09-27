@@ -142,3 +142,146 @@ Monthly rent: \$1,800.\par
     assert r"\fonttbl" not in doc.text_snippet
     assert r"\generator" not in doc.text_snippet
     assert "agreement.rtf" in doc.prompt_text
+
+
+def test_extract_pdf_corrupt_xref_no_stderr(
+    extractor: DocumentTextExtractor, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    """Corrupt startxref pointer is handled cleanly with zero stderr pollution."""
+    pdf_file = tmp_path / "corrupt_xref.pdf"
+    content = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n"
+        b"xref\n0 4\n"
+        b"0000000000 65535 f \n"
+        b"0000000010 00000 n \n"
+        b"0000000060 00000 n \n"
+        b"0000000117 00000 n \n"
+        b"trailer\n<< /Size 4 /Root 1 0 R >>\n"
+        b"startxref\n"
+        b"99999\n"
+        b"%%EOF\n"
+    )
+    pdf_file.write_bytes(content)
+
+    doc = extractor.extract(pdf_file)
+    captured = capsys.readouterr()
+
+    assert captured.err == ""
+    assert doc.file_type == "pdf"
+    assert doc.extraction_error is None
+    assert "extraction_warnings" in doc.metadata
+    assert any("startxref" in w.lower() for w in doc.metadata["extraction_warnings"])
+
+
+def test_extract_pdf_truncated_no_stderr(
+    extractor: DocumentTextExtractor, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    """Truncated corrupt PDF sets extraction_error without stderr pollution."""
+    pdf_file = tmp_path / "truncated.pdf"
+    pdf_file.write_bytes(b"%PDF-1.5\n%incomplete file without valid objects\n")
+
+    doc = extractor.extract(pdf_file)
+    captured = capsys.readouterr()
+
+    assert captured.err == ""
+    assert doc.file_type == "pdf"
+    assert doc.extraction_error is not None
+    assert "corrupt" in doc.extraction_error.lower() or "unreadable" in doc.extraction_error.lower()
+
+
+def test_extract_pdf_empty_file_no_stderr(
+    extractor: DocumentTextExtractor, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    """Empty 0-byte PDF is cleanly handled without stderr output."""
+    pdf_file = tmp_path / "empty.pdf"
+    pdf_file.write_bytes(b"")
+
+    doc = extractor.extract(pdf_file)
+    captured = capsys.readouterr()
+
+    assert captured.err == ""
+    assert doc.file_type == "pdf"
+    assert doc.extraction_error == "Empty or zero-byte PDF file"
+
+
+def test_extract_pdf_encrypted_no_stderr(
+    extractor: DocumentTextExtractor, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    """Password-encrypted PDF without empty password access reports clean error without crashing or stderr output."""
+    pdf_file = tmp_path / "encrypted.pdf"
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.encrypt(user_password="secret_password_123")
+    with open(pdf_file, "wb") as f:
+        writer.write(f)
+
+    doc = extractor.extract(pdf_file)
+    captured = capsys.readouterr()
+
+    assert captured.err == ""
+    assert doc.file_type == "pdf"
+    assert doc.extraction_error == "Encrypted or password-protected PDF"
+
+
+def test_extract_pdf_concurrent_corrupt_no_stderr(
+    extractor: DocumentTextExtractor, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    """Concurrent extraction of corrupt PDFs across threads produces zero stderr leaks."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    files = []
+    for i in range(10):
+        f = tmp_path / f"corrupt_{i}.pdf"
+        f.write_bytes(f"%PDF-1.4\ncorrupt junk {i}\n%%EOF".encode("utf-8"))
+        files.append(f)
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        docs = list(executor.map(extractor.extract, files))
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert len(docs) == 10
+    for doc in docs:
+        assert doc.extraction_error is not None
+
+
+def test_extract_pdf_partial_page_corruption(
+    extractor: DocumentTextExtractor, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+):
+    """If page 2 fails with a corrupt stream error, page 1 text is preserved cleanly."""
+    import pypdf
+    from unittest.mock import MagicMock
+
+    pdf_file = tmp_path / "two_pages.pdf"
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.add_blank_page(width=612, height=792)
+    with open(pdf_file, "wb") as f:
+        writer.write(f)
+
+    # Mock PdfReader to return page 1 with text and page 2 that raises PdfStreamError
+    def mock_pdf_reader(stream, strict=False):
+        reader = MagicMock()
+        reader.is_encrypted = False
+        reader.metadata = None
+        page1 = MagicMock()
+        page1.extract_text.return_value = "Page 1 Successful Invoicing Text"
+        page2 = MagicMock()
+        page2.extract_text.side_effect = pypdf.errors.PdfStreamError("Corrupt stream object")
+        reader.pages = [page1, page2]
+        return reader
+
+    monkeypatch.setattr(pypdf, "PdfReader", mock_pdf_reader)
+
+    doc = extractor.extract(pdf_file)
+    captured = capsys.readouterr()
+
+    assert captured.err == ""
+    assert doc.file_type == "pdf"
+    assert "Page 1 Successful Invoicing Text" in doc.text_snippet
+    assert doc.extraction_error is None
+    assert "extraction_warnings" in doc.metadata
+    assert any("Corrupt stream object" in w for w in doc.metadata["extraction_warnings"])
