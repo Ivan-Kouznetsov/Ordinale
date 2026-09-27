@@ -8,9 +8,56 @@ inference, without writing intermediate text files to disk.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from contextlib import contextmanager
+from contextvars import ContextVar
+import logging
 from pathlib import Path
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
+import warnings
+
+_pdf_diagnostic_context: ContextVar[Optional[list[str]]] = ContextVar(
+    "_pdf_diagnostic_context", default=None
+)
+
+
+class _PypdfLogCaptureHandler(logging.Handler):
+    """Captures log records emitted by pypdf into the active context/thread."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        ctx = _pdf_diagnostic_context.get()
+        if ctx is not None:
+            ctx.append(record.getMessage())
+
+
+def _ensure_pypdf_logging_configured() -> None:
+    pypdf_logger = logging.getLogger("pypdf")
+    pypdf_logger.setLevel(logging.WARNING)
+    pypdf_logger.propagate = False
+    if not any(isinstance(h, _PypdfLogCaptureHandler) for h in pypdf_logger.handlers):
+        pypdf_logger.addHandler(_PypdfLogCaptureHandler())
+
+
+_ensure_pypdf_logging_configured()
+
+
+@contextmanager
+def capture_pdf_diagnostics() -> Iterator[list[str]]:
+    """Context manager that suppresses stderr/warnings and captures diagnostics during PDF parsing."""
+    _ensure_pypdf_logging_configured()
+    diagnostics: list[str] = []
+    token = _pdf_diagnostic_context.set(diagnostics)
+    try:
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            yield diagnostics
+            for w in caught_warnings:
+                msg = str(w.message)
+                if msg and msg not in diagnostics:
+                    diagnostics.append(msg)
+    finally:
+        _pdf_diagnostic_context.reset(token)
+
 
 
 @dataclass
@@ -216,36 +263,133 @@ class DocumentTextExtractor:
         )
 
     def _extract_pdf(self, path: Path, file_size: int) -> ExtractedDocument:
-        """Extracts text from PDF page 1 & 2 using pypdf."""
+        """Extracts text from PDF page 1 & 2 using pypdf defensively without stderr pollution."""
         import pypdf
-
-        reader = pypdf.PdfReader(str(path))
-        metadata: Dict[str, Any] = {"pages": len(reader.pages)}
-
-        if reader.metadata:
-            if reader.metadata.title:
-                metadata["title"] = str(reader.metadata.title).strip()
-            if reader.metadata.author:
-                metadata["author"] = str(reader.metadata.author).strip()
-
-        chunks: list[str] = []
-        for i, page in enumerate(reader.pages[:2]):  # Scan up to first 2 pages
-            page_text = page.extract_text() or ""
-            if page_text.strip():
-                chunks.append(page_text.strip())
-            if sum(len(c) for c in chunks) >= self.max_chars * 1.5:
-                break
-
-        snippet = self._truncate("\n\n".join(chunks))
-
-        return ExtractedDocument(
-            file_path=path,
-            file_name=path.name,
-            file_type="pdf",
-            text_snippet=snippet,
-            metadata=metadata,
-            file_size_bytes=file_size,
+        from pypdf.errors import (
+            EmptyFileError,
+            FileNotDecryptedError,
+            PdfReadError,
+            PdfStreamError,
+            WrongPasswordError,
         )
+
+        with capture_pdf_diagnostics() as diagnostics:
+            # 1. Open reader defensively
+            try:
+                reader = pypdf.PdfReader(str(path), strict=False)
+            except EmptyFileError:
+                return ExtractedDocument(
+                    file_path=path,
+                    file_name=path.name,
+                    file_type="pdf",
+                    text_snippet="",
+                    file_size_bytes=file_size,
+                    extraction_error="Empty or zero-byte PDF file",
+                )
+            except (FileNotDecryptedError, WrongPasswordError):
+                return ExtractedDocument(
+                    file_path=path,
+                    file_name=path.name,
+                    file_type="pdf",
+                    text_snippet="",
+                    file_size_bytes=file_size,
+                    extraction_error="Encrypted or password-protected PDF",
+                )
+            except Exception as exc:
+                err_detail = f": {exc}" if str(exc) else ""
+                diag_msg = f" ({'; '.join(diagnostics)})" if diagnostics else ""
+                return ExtractedDocument(
+                    file_path=path,
+                    file_name=path.name,
+                    file_type="pdf",
+                    text_snippet="",
+                    file_size_bytes=file_size,
+                    extraction_error=f"Corrupt or unreadable PDF structure{err_detail}{diag_msg}",
+                )
+
+            # Check if encrypted and cannot be decrypted
+            if getattr(reader, "is_encrypted", False):
+                try:
+                    decrypted = reader.decrypt("")
+                    if decrypted == 0:
+                        return ExtractedDocument(
+                            file_path=path,
+                            file_name=path.name,
+                            file_type="pdf",
+                            text_snippet="",
+                            file_size_bytes=file_size,
+                            extraction_error="Encrypted or password-protected PDF",
+                        )
+                except Exception:
+                    return ExtractedDocument(
+                        file_path=path,
+                        file_name=path.name,
+                        file_type="pdf",
+                        text_snippet="",
+                        file_size_bytes=file_size,
+                        extraction_error="Encrypted or password-protected PDF",
+                    )
+
+            # 2. Extract metadata defensively
+            metadata: Dict[str, Any] = {}
+            try:
+                metadata["pages"] = len(reader.pages)
+            except Exception:
+                metadata["pages"] = 0
+
+            try:
+                if reader.metadata:
+                    if reader.metadata.title:
+                        metadata["title"] = str(reader.metadata.title).strip()
+                    if reader.metadata.author:
+                        metadata["author"] = str(reader.metadata.author).strip()
+            except Exception:
+                pass
+
+            # 3. Read pages defensively (up to first 2 pages)
+            chunks: list[str] = []
+            page_errors: list[str] = []
+            pages_to_scan = []
+            try:
+                pages_to_scan = reader.pages[:2]
+            except Exception as exc:
+                page_errors.append(f"Could not load page list: {exc}")
+
+            for page in pages_to_scan:
+                try:
+                    page_text = page.extract_text() or ""
+                    if page_text.strip():
+                        chunks.append(page_text.strip())
+                    if sum(len(c) for c in chunks) >= self.max_chars * 1.5:
+                        break
+                except Exception as exc:
+                    page_errors.append(str(exc))
+
+            combined_text = "\n\n".join(chunks)
+            snippet = self._truncate(combined_text)
+
+            all_warnings = list(diagnostics)
+            if page_errors:
+                all_warnings.extend(f"Page error: {e}" for e in page_errors)
+            if all_warnings:
+                metadata["extraction_warnings"] = all_warnings
+
+            extraction_error = None
+            if not snippet:
+                if page_errors:
+                    extraction_error = f"Corrupt or unreadable PDF content: {'; '.join(page_errors)}"
+                elif not pages_to_scan and all_warnings:
+                    extraction_error = f"Corrupt or unreadable PDF content: {'; '.join(all_warnings)}"
+
+            return ExtractedDocument(
+                file_path=path,
+                file_name=path.name,
+                file_type="pdf",
+                text_snippet=snippet,
+                metadata=metadata,
+                file_size_bytes=file_size,
+                extraction_error=extraction_error,
+            )
 
     def _extract_html(self, path: Path, file_size: int) -> ExtractedDocument:
         """Extracts text from HTML / web snapshot files using BeautifulSoup."""
