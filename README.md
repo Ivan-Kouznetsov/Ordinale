@@ -5,486 +5,105 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](pyproject.toml)
 [![Powered By: Laya](https://img.shields.io/badge/Powered%20By-Laya-teal.svg)](https://huggingface.co/convaiinnovations/laya)
-[![Accelerated: CUDA](https://img.shields.io/badge/Hardware-CUDA%20%7C%20MPS%20%7C%20CPU-green.svg)](#running-on-cuda-gpu-acceleration)
-
-**Ordinale** is an intelligent, high-performance desktop assistant designed to clean up cluttered directories (such as `Downloads`, `Desktop`, or chaotic document archives). Using the zero-generation [Laya decision model](https://huggingface.co/convaiinnovations/laya), Ordinale inspects document snippets in-memory, categorizes them across multiple dimensions (category, financial sub-type, school vs. academic research, retention priority, and privacy sensitivity), and routes them into structured folders—all with safe dry-run visual previews, deduplication, and 1-command rollback.
+[![Accelerated: CUDA](https://img.shields.io/badge/Hardware-CUDA%20%7C%20MPS%20%7C%20CPU-green.svg)](docs/cuda.md)
 
 ---
 
-## Table of Contents
-
-- [What Ordinale Does](#what-ordinale-does)
-- [Why Use Ordinale?](#why-use-ordinale)
-- [How It Works](#how-it-works)
-- [Installation & Setup](#installation--setup)
-- [How to Use Ordinale](#how-to-use-ordinale)
-  - [Command-Line Options](#command-line-options)
-  - [Common Workflows](#common-workflows)
-- [Running on CUDA (GPU Acceleration)](#running-on-cuda-gpu-acceleration)
-- [Troubleshooting CUDA & GPU Issues](#troubleshooting-cuda--gpu-issues)
-  - [Newer GPU Architectures & Precompiled Wheel Incompatibilities](#1-newer-gpu-architectures--precompiled-binary-incompatibilities)
-  - [CUDA is Available is False](#2-torchcudais_available-returns-false)
-  - [Strict CUDA Enforcement and CudaDeviceError](#3-strict-cuda-enforcement--cudadeviceerror)
-  - [CUDA Out-of-Memory (OOM)](#4-cuda-out-of-memory-oom)
-  - [Windows Symlinks & Long Path Caveats](#5-windows-symlinks--long-path-caveats)
-- [Testing & Benchmarking](#testing--benchmarking)
-- [Project Architecture](#project-architecture)
-- [License](#license)
-
----
-
-## What Ordinale Does
-
-1. **Automated Multi-Format In-Memory Extraction**:
-   - Scans directories recursively (or top-level) for `.docx`, `.pdf`, `.html`, `.htm`, `.txt`, `.md`, and `.rtf`.
-   - Reads only the first 1–2 pages or representative text snippets (up to 1,200 characters) directly in memory.
-   - **Never writes unencrypted intermediate text dumps or plain text snippets to disk.**
-
-2. **Multi-Dimensional AI Classification**:
-   - **Primary Categories**:
-     - `Financial` (tax assessments, banking, payroll, investments, general loans)
-     - `Receipts & Invoices` (purchase receipts, vendor invoices, utility bills)
-     - `Contracts & Legal` (NDAs, residential leases, employment agreements, terms of service)
-     - `Education & Academic` (coursework, homework, syllabi, arXiv preprints, journal articles)
-     - `Web Articles & Clippings` (HTML snapshots, saved blogs, online articles)
-     - `Career & Resumes` (curriculum vitae, resumes, cover letters)
-     - `Personal & Identity` (medical records, insurance policies, vehicle registrations)
-     - `Manuals & Guides` (technical documentation, user manuals, appliance setup)
-     - `Notes & Drafts` (scratchpad notes, meeting minutes, rough drafts)
-   - **Specialized Financial Sub-Routing**:
-     - Automatically routes documents into subfolders such as `Financial/Taxes & Government` (e.g. CRA Notices of Assessment, T4/T5 slips), `Financial/Banking`, `Financial/Investments`, `Financial/Payroll`, or `Financial/General`.
-   - **Intelligent Academic vs. School Disambiguation**:
-     - Distinguishes student coursework from peer-reviewed research papers using regex heuristics for course codes (e.g., `CS 240`, `BIO:101`), preprint indicators (`arXiv`, `bioRxiv`, `SSRN`), publisher markers (`IEEE`, `ACM`, `Springer`, `Nature`), and file format priors.
-   - **Heuristic Engine for Notes & Drafts**:
-     - Identifies scratchpads, meeting minutes, rough drafts, and action items using file format priors (.txt, .md, .docx, .rtf), meeting markers (Attendees:, Action items:, Agenda:), checklist/task syntax (- [ ], TODO:), informal bullet structures, and competitor pattern exclusions.
-   - **Retention Scoring**:
-     - Scores whether a document is ephemeral/prunable (`0`), active reference (`1`), or a permanent archive (`2`).
-   - **Privacy & Sensitivity Detection**:
-     - Flags sensitive personal identity, tax identifiers (SSN / SIN), financial numbers, or confidential clauses.
-
-3. **Safe File Operations & Rollback Engine**:
-   - **Safe Dry-Run by Default**: Renders an interactive, color-coded visual triage table with confidence percentages and planned file movements before touching anything on disk.
-   - **SHA-256 Collision Protection**: Identifies identical files and skips duplicate copies. If different documents share the same name, Ordinale appends safe incremental suffixes (e.g., `invoice (1).pdf`) instead of overwriting.
-   - **Folder Hierarchy Preservation**: Maintains relative subfolder structures within destination category folders.
-   - **1-Command Undo / Rollback**: Records every move action with SHA-256 hashes and original paths into `.organizer_manifest.json`, allowing complete restoration at any time.
-
----
-
-## Why Use Ordinale?
-
-| Feature | Ordinale | Traditional Cloud LLMs / Scripts |
-| :--- | :--- | :--- |
-| **Data Privacy** | **100% Local**. Zero cloud API calls. Confidential taxes, IDs, and financial records never leave your machine. | Files or snippets sent over the internet to third-party APIs. |
-| **Inference Model** | **Zero-Generation Classification**. Uses Laya's direct scoring / choice engine in a single forward pass (<10–50 ms). | Generative LLMs generate long tokens, suffer latency, and can hallucinate filenames. |
-| **Execution Safety** | **Dry-Run by Default** with Rich tables, low-confidence review prompts, and SHA-256 deduplication. | Might move/rename files or overwrite by default. |
-| **Instant Rollback** | **Manifest Ledger (`--undo`)** reverts entire batches back to original locations instantaneously. | Manual recovery or lost original folder paths. |
-| **Operating Cost** | **$0**. Unlimited local scans without API rate limits or subscription fees. | Per-token / per-document API charges. |
-
----
-
-## How It Works
+**Ordinale** is a desktop document organizer for cluttered directories (such as `Downloads`, `Desktop`, or document archives). Using the zero-generation [Laya decision model](https://huggingface.co/convaiinnovations/laya) and NLP-based heuristics, Ordinale inspects document snippets in memory, classifies them across multiple dimensions (financial sub-types, research vs. coursework, retention priority, and privacy sensitivity), and routes them into organized folders with dry-run visual previews and rollback support.
 
 ```
-Messy Folder (PDF, DOCX, HTML, TXT, MD)
-                 │
-                 ▼
-     DocumentTextExtractor
-     (In-Memory Snippet Extraction: 400-1200 chars)
-                 │
-                 ▼
-       DocumentClassifier
-     (Laya Decision Engine: Choice + Scoring + Sensitivity)
-                 │
-                 ├── Category & Confidence
-                 ├── Financial / Academic Subcategory
-                 ├── Retention Score (0 - 2)
-                 └── Privacy Sensitivity Flag
-                 │
-                 ▼
-       OrganizerEngine Plan
-     (Collision Resolution + SHA-256 Deduplication)
-                 │
-         ┌───────┴───────┐
-         ▼               ▼
-    [Dry-Run Preview]  [--execute]
-   (Rich Terminal UI)    │
-                         ▼
-                   Safe Atomic Moves
-                         │
-                         ▼
-             .organizer_manifest.json
-              (Enables instant --undo)
+Messy Folder ──▶ In-Memory Extractor ──▶ Laya Decision Engine ──▶ Safe Triage Plan
+(PDF/DOCX/HTML)  (400-1200 chars in RAM) (Zero-Gen Classification)   (Dry-Run Table & Rollback)
 ```
 
 ---
 
-## Installation & Setup
+## Why Ordinale?
 
-### Prerequisites
-- **Python**: 3.9, 3.10, 3.11, or 3.12 (Python 3.10 or 3.11 recommended for maximum PyTorch and CUDA compatibility).
-- **Operating System**: Windows 10/11, Linux (Ubuntu, Debian, Fedora, Arch), or macOS.
-- **Hardware**: Any modern CPU; NVIDIA GPU optional but recommended for ultra-fast batch processing.
+- 🔒 **100% Local & Private**: No cloud APIs or telemetry. Sensitive taxes, IDs, and financial records never leave your machine.
+- ⚡ **Zero-Generation Speed**: Classifies documents in a single forward pass (<10–50 ms) without LLM hallucinations.
+- 🛡️ **Safe Dry-Run by Default**: Renders an interactive, color-coded terminal table before touching any files on disk.
+- ↩️ **1-Command Undo**: Reverts entire batches back to original locations instantaneously using `.organizer_manifest.json`.
+- 🧩 **Multi-Dimensional Routing**: Disambiguates tax slips, banking records, student homework, arXiv preprints, receipts, and notes.
 
-### 1. Clone the Repository
+---
+
+## Quickstart (30 Seconds)
+
+### On Windows (Command Prompt `cmd.exe`)
+
+```cmd
+git clone https://github.com/Ivan-Kouznetsov/Ordinale.git
+cd Ordinale
+
+python -m venv .venv
+.venv\Scripts\activate.bat
+
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm
+
+:: Safe dry-run preview (does not move files):
+python -m ordinale.doc_organizer --scan "%USERPROFILE%\Downloads"
+```
+
+### On Windows (PowerShell)
+
+```powershell
+git clone https://github.com/Ivan-Kouznetsov/Ordinale.git
+cd Ordinale
+
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm
+
+# Safe dry-run preview (does not move files):
+python -m ordinale.doc_organizer --scan "$HOME\Downloads"
+```
+
+### On Linux / macOS (Bash / Zsh)
+
 ```bash
 git clone https://github.com/Ivan-Kouznetsov/Ordinale.git
 cd Ordinale
-```
 
-### 2. Create and Activate a Virtual Environment
-**On Windows (PowerShell):**
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-**On Windows (Command Prompt):**
-```cmd
-python -m venv .venv
-.venv\Scripts\activate.bat
-```
-
-**On Linux / macOS:**
-```bash
 python3 -m venv .venv
 source .venv/bin/activate
-```
 
-### 3. Install Dependencies
-```bash
-# Upgrade pip first
-pip install --upgrade pip
-
-# Install project dependencies
 pip install -r requirements.txt
-
-# Download the lightweight spaCy English NLP model for entity and header heuristics:
 python -m spacy download en_core_web_sm
 
-# (Optional) Install Ordinale in editable mode for the CLI commands:
-pip install -e .
-```
-
-> **Note on Initial Run & Offline Detection**: On its first run, Ordinale downloads the lightweight Laya model weights (`convaiinnovations/laya`) from Hugging Face Hub to your local cache. Once cached, **Ordinale automatically activates offline mode on all subsequent runs** to bypass unnecessary network checks, eliminate download latency, and work in air-gapped environments. Pass `--online` to force checking Hugging Face Hub for updates.
-
----
-
-## How to Use Ordinale
-
-Once installed, you can invoke the CLI using `ordinale`, `doc-organizer`, or `python -m ordinale.doc_organizer`.
-
-### Command-Line Options
-
-| Flag | Argument | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--scan` | `<PATH>` | *None* | Source directory containing documents to organize. |
-| `--target` | `<PATH>` | `<source>/Organized_Documents` | Destination root directory for sorted folders. |
-| `--execute` | *None* | *Disabled (Dry-run)* | Perform actual file moves. *(By default, runs in safe preview mode without moving files.)* |
-| `--interactive` | *None* | *Disabled* | Prompts for manual confirmation when routing low-confidence documents. |
-| `--undo` | *None* | *Disabled* | Reverts the last executed move batch using the manifest ledger. |
-| `--samples` | *None* | *Active (Default action)* | Runs categorization benchmark against test sample documents (runs when neither `--scan` nor `--undo` is passed). |
-| `--samples-file` | `<FILE>` | `sample_documents.json` | Path to benchmark JSON dataset. |
-| `--device` | `cpu` \| `cuda` \| `mps` | `auto` | Hardware compute device (auto-detects CUDA $\rightarrow$ MPS $\rightarrow$ CPU). |
-| `--workers`, `-w` | `<INT>` | `min(8, CPU cores)` | Number of parallel worker threads for file analysis. |
-| `--sequential` | *None* | *Disabled (Parallel)* | Force single-threaded processing. |
-| `--no-recursive` | *None* | *Disabled (Recursive)* | Only scan the top-level directory, ignoring subdirectories. |
-| `--no-preserve-folders` | *None* | *Disabled (Preserve)* | Do not preserve relative source subdirectories under destination categories. |
-| `--offline` | *None* | *Auto (On if cached)* | Force offline mode (reads directly from local cache without checking Hugging Face Hub). Enabled automatically if model is already downloaded. |
-| `--online` | *None* | *Disabled* | Force online mode to check Hugging Face Hub for model updates even if cached locally. |
-| `--config` | `<PATH>` | Auto-discovered / bundled | Path to a custom settings file (`.toml` or `.json`). |
-
----
-
-### Common Workflows
-
-#### 1. Dry-Run Visual Preview (Default Safe Mode)
-Inspect what Ordinale plans to do without altering or moving any files:
-```bash
-ordinale --scan "C:/Users/username/Downloads" --target "C:/Users/username/Documents/Organized"
-```
-Ordinale renders a Rich table displaying:
-- Source document name & relative path
-- Predicted destination subfolder
-- Confidence score (color-coded green, yellow, red)
-- Document retention lifespan (Permanent Archive, Active Reference, Prunable)
-- Sensitive document indicator
-- Planned triage action (`MOVE`, `MOVE (SECURE)`, `REVIEW NEEDED`, or `DUPLICATE (Skip)`)
-
-#### 2. Execute File Movement
-Once you are satisfied with the dry-run plan, apply the changes with `--execute`:
-```bash
-ordinale --scan "C:/Users/username/Downloads" --target "C:/Users/username/Documents/Organized" --execute
-```
-
-#### 3. Interactive Review for Ambiguous Documents
-Prompt for manual confirmation before moving files that fall below the confidence threshold:
-```bash
-ordinale --scan "./my_archive" --target "./organized" --execute --interactive
-```
-
-#### 4. Undo / Rollback
-If you ever want to revert an entire batch back to its original folder structure:
-```bash
-ordinale --target "C:/Users/username/Documents/Organized" --undo
-```
-Ordinale reads `.organizer_manifest.json`, verifies file hashes, moves every file back to its original location, and updates the manifest.
-
-#### 5. Custom File Extensions & Settings File
-By default, Ordinale scans `.docx`, `.pdf`, `.html`, `.htm`, `.mhtml`, `.txt`, `.md`, `.markdown`, and `.rtf`.
-
-You can customize which extensions to scan and map custom file types using a settings file (`ordinale.toml` or `ordinale.json`) in your project or home directory:
-
-**`ordinale.toml`**:
-```toml
-[scanner]
-# Only look for PDF and Word documents
-extensions = [".pdf", ".docx"]
-
-[scanner.custom_types]
-# Map custom extensions to text/markdown extractors
-".rst" = "markdown"
-".log" = "text"
-```
-
-**`ordinale.json`**:
-```json
-{
-  "scanner": {
-    "extensions": [".pdf", ".docx"],
-    "custom_types": {
-      ".rst": "markdown",
-      ".log": "text"
-    }
-  }
-}
-```
-
-Or pass a settings file explicitly:
-```bash
-ordinale --scan "./my_docs" --config "./my_settings.toml"
-```
-
-#### 6. Fast Parallel Processing on Large Collections
-Tune the concurrency worker threads for multi-core CPUs:
-```bash
-ordinale --scan "/path/to/archive" --target "/path/to/target" --workers 8 --execute
+# Safe dry-run preview (does not move files):
+python -m ordinale.doc_organizer --scan ~/Downloads
 ```
 
 ---
 
-## Running on CUDA (GPU Acceleration)
+## Essential Commands
 
-Ordinale supports GPU acceleration via NVIDIA CUDA. Running on CUDA accelerates document categorization down to **a few milliseconds per document**.
-
-### 1. Enable CUDA
-Pass `--device cuda` (or specify a specific GPU index like `--device cuda:0`):
-```bash
-ordinale --scan "./documents" --target "./organized" --device cuda
-```
-
-### 2. Install PyTorch with CUDA Support
-Standard `pip install torch` from PyPI often defaults to CPU-only wheels on Windows and Linux. To run on CUDA, you must install PyTorch with the CUDA wheel matching your installed NVIDIA driver and GPU architecture:
-
-```bash
-# Recommended for CUDA 13.2 (RTX 50-series Blackwell / Compute Capability 12.0+ / Drivers 590+):
-pip install torch --index-url https://download.pytorch.org/whl/cu132
-
-# For CUDA 12.4 / 12.6 (RTX 40-series / 30-series / Drivers 550+):
-pip install torch --index-url https://download.pytorch.org/whl/cu126
-
-# For CUDA 12.1:
-pip install torch --index-url https://download.pytorch.org/whl/cu121
-
-# For CUDA 11.8 (Legacy GPUs / Older Drivers):
-pip install torch --index-url https://download.pytorch.org/whl/cu118
-```
-
-
-### 3. Verify CUDA in Python
-To verify that PyTorch detects your NVIDIA GPU correctly:
-```bash
-python -c "import torch; print('CUDA Available:', torch.cuda.is_available()); print('Device Name:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None')"
-```
-Expected output:
-```text
-CUDA Available: True
-Device Name: NVIDIA GeForce RTX ...
-```
+| Action | Command |
+| :--- | :--- |
+| **Dry-Run Preview** | `ordinale --scan "C:/path/to/docs" --target "C:/path/to/organized"` |
+| **Execute Move** | `ordinale --scan "C:/path/to/docs" --target "C:/path/to/organized" --execute` |
+| **Interactive Triage** | `ordinale --scan "C:/path/to/docs" --execute --interactive` |
+| **Instant Rollback** | `ordinale --target "C:/path/to/organized" --undo` |
+| **Benchmark Suite** | `ordinale --samples` |
 
 ---
 
-## Troubleshooting CUDA & GPU Issues
+## Documentation Hub
 
-Ordinale incorporates strict CUDA verification in `doc_classifier.py`: **if you specify `--device cuda`, Ordinale will never silently downgrade to CPU.** Instead, it will fail fast with a descriptive `CudaDeviceError` so you immediately know why your GPU is not running.
+Explore the guides in the `docs/` folder for complete details:
 
-Below are common CUDA issues and how to resolve them:
-
-### 1. Newer GPU Architectures & Precompiled Binary Incompatibilities
-
-#### Symptom:
-When running on newer NVIDIA GPU architectures (such as **Ada Lovelace / RTX 40-series** with compute capability `sm_89`, or **Blackwell / RTX 50-series** with `sm_100`/`sm_120`), you may encounter:
-```text
-RuntimeError: CUDA error: no kernel image is available for execution on the device
-CUDA kernel errors / device-side assert triggered
-Process finishes with CudaDeviceError: CUDA execution failed during model warmup
-```
-
-#### Cause:
-Precompiled Python wheels (such as older PyTorch binaries or third-party compiled C++/CUDA extensions) are compiled against a fixed set of target CUDA architectures (e.g., `sm_75` for Turing, `sm_80`/`sm_86` for Ampere). If your GPU's compute capability is newer than what was baked into the installed PyTorch wheel, CUDA cannot find compatible machine code or PTX JIT kernels for your chip.
-
-#### Solution:
-1. **Upgrade to PyTorch with CUDA 12.4+ or Nightly**:
-   Newer GPU architectures require PyTorch wheels compiled with modern CUDA toolkits:
-   ```bash
-   pip uninstall torch -y
-   pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu124
-   ```
-   For cutting-edge or unreleased hardware architectures, use the PyTorch Nightly build:
-   ```bash
-   pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu124
-   ```
-2. **Set `TORCH_CUDA_ARCH_LIST` (If Building from Source)**:
-   If building custom CUDA wheels or PyTorch extensions, explicitly specify your GPU's architecture:
-   - **PowerShell (Windows)**:
-     ```powershell
-     $env:TORCH_CUDA_ARCH_LIST="8.9"   # For RTX 4080 / 4090 (Ada Lovelace)
-     ```
-   - **Command Prompt (Windows)**:
-     ```cmd
-     set TORCH_CUDA_ARCH_LIST=8.9
-     ```
-   - **Linux (Bash)**:
-     ```bash
-     export TORCH_CUDA_ARCH_LIST="8.9"
-     ```
-3. **Verify Driver Version**:
-   Run `nvidia-smi` in your terminal. Ensure the top-right `CUDA Version: XX.X` reported by your driver is **greater than or equal** to the CUDA toolkit version of your PyTorch build (e.g., Driver CUDA version $\ge$ 12.4). Update your driver from [NVIDIA's website](https://www.nvidia.com/download/index.aspx) if necessary.
-
----
-
-### 2. `torch.cuda.is_available()` returns `False`
-
-#### Cause:
-You have a CPU-only build of PyTorch installed in your virtual environment.
-
-#### Solution:
-Check your current installation:
-```bash
-python -c "import torch; print(torch.__version__)"
-```
-If the version ends in `+cpu` (or does not contain `+cu12X`), reinstall the CUDA version:
-```bash
-pip uninstall torch -y
-pip install torch --index-url https://download.pytorch.org/whl/cu124
-```
-
----
-
-### 3. Strict CUDA Enforcement & `CudaDeviceError`
-
-#### Symptom:
-```text
-Device Error: CUDA device 'cuda' was explicitly specified, but torch.cuda.is_available() is False.
-Exiting immediately without falling back to CPU because CUDA was specified.
-```
-
-#### Cause:
-Ordinale enforces device honesty. In many other libraries, requesting `cuda` silently downgrades to `cpu` when an initialization error occurs, causing unexplained slowdowns. Ordinale prohibits this fallback behavior.
-
-#### Solution:
-- If you intended to run on CPU, omit the `--device` flag or pass `--device cpu`.
-- If you intended to run on CUDA, resolve the PyTorch CUDA installation using the steps in [Section 2](#2-torchcudais_available-returns-false).
-
----
-
-### 4. CUDA Out-of-Memory (OOM)
-
-#### Symptom:
-```text
-torch.cuda.OutOfMemoryError: CUDA out of memory.
-```
-
-#### Cause:
-Laya is a lightweight decision model (< 1 GB VRAM footprint). However, OOM can happen if:
-- Another GPU-intensive process (e.g. video generation, local 70B LLM server, game) is consuming all VRAM.
-- Multiple worker threads allocate concurrent GPU contexts.
-
-#### Solution:
-1. **Reduce Worker Threads or Run Sequentially**:
-   ```bash
-   ordinale --scan "./my_docs" --target "./organized" --device cuda --sequential
-   # or limit to 2 workers:
-   ordinale --scan "./my_docs" --target "./organized" --device cuda --workers 2
-   ```
-2. **Clear GPU Memory**: Close background applications holding GPU allocations (check VRAM usage using `nvidia-smi`).
-
----
-
-### 5. Windows Symlinks & Long Path Caveats
-
-- **Symlink Privilege Error (`WinError 1314`)**:
-  Windows requires Administrator privileges or Developer Mode to create filesystem symlinks. Ordinale automatically sets `HF_HUB_DISABLE_SYMLINKS=1` in Python before importing Hugging Face libraries, avoiding this error completely.
-- **Path Length Limit (MAX_PATH = 260 characters)**:
-  When scanning deep nested folders, Windows may throw path truncation errors. Enable Long Paths in Windows:
-  1. Open PowerShell as Administrator.
-  2. Run:
-     ```powershell
-     New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
-       -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
-     ```
-
----
-
-## Testing & Benchmarking
-
-Ordinale includes an extensive test suite and synthetic sample documents representing diverse file types (tax notices, bank statements, homework assignments, arXiv papers, receipts, resumes, and medical records).
-
-### Run Test Suite
-```bash
-pytest -v
-```
-
-### Run Benchmark Suite
-To test classification accuracy and latency against the bundled fixtures:
-```bash
-ordinale --samples
-```
-This generates a detailed benchmark table and summary statistics:
-```text
-┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ ID / Filename       ┃ Predicted Category  ┃ Expected ┃ Subcategory / Path          ┃ Retention        ┃ Sensitive┃ Action      ┃ Latency  ┃
-┗━━━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━┻━━━━━━━━━━━━━┻━━━━━━━━━━┛
-...
-Benchmark Performance:
-Total Documents Tested: 12 | Category Accuracy: 100.0% | Avg Latency: ~18.5 ms/doc
-```
-
----
-
-## Project Architecture
-
-```
-Ordinale/
-├── pyproject.toml              # Build & package configuration
-├── requirements.txt            # Production dependencies (laya, rich, pypdf, python-docx, etc.)
-├── requirements-dev.txt        # Development dependencies (pytest)
-├── README.md                   # Project documentation
-├── src/
-│   └── ordinale/
-│       ├── __init__.py         # Package exports
-│       ├── doc_organizer.py    # CLI entry point, visual Rich tables, and argument parsing
-│       ├── doc_classifier.py   # Laya integration, multi-task scoring, & CUDA validation
-│       ├── extractor.py        # In-memory document text extractor (.docx, .pdf, .html, .txt, .md)
-│       └── organizer_engine.py # Planning, collision resolution, safe moves, & undo manifest
-└── tests/
-    ├── fixtures/
-    │   └── sample_documents.json # Synthetic sample benchmark dataset
-    ├── test_doc_classifier.py  # Classifier logic, heuristics, & CUDA error handling tests
-    ├── test_doc_cli.py         # CLI parameter & flag tests
-    ├── test_doc_dataset.py     # End-to-end dataset tests
-    ├── test_extractor.py       # Format extractor tests
-    └── test_organizer_engine.py# Safe movement, deduplication, & undo rollback tests
-```
+| Guide | Description |
+| :--- | :--- |
+| 🚀 **[Installation & Setup](docs/installation.md)** | Step-by-step virtual environment setup, offline model caching, and Windows path caveats. |
+| 📖 **[CLI Reference & Workflows](docs/cli_and_workflows.md)** | Full command-line options reference, parallel processing, and interactive review. |
+| ⚙️ **[Configuration Reference](docs/configuration.md)** | Customizing `ordinale.toml` / `ordinale.json`, custom file extensions, and NLP settings. |
+| ⚡ **[CUDA & GPU Acceleration](docs/cuda.md)** | PyTorch CUDA wheel matrix, GPU detection, and troubleshooting GPU architectures / OOM. |
+| 🧠 **[Classification & Heuristics](docs/classification.md)** | Primary categories, financial sub-routing, coursework vs. research detection, and retention scoring. |
+| 🧪 **[Development & Architecture](docs/development.md)** | Running unit tests (`pytest`), synthetic benchmark fixtures, and repository codebase architecture. |
 
 ---
 
