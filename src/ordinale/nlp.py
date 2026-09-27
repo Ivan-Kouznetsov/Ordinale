@@ -8,6 +8,7 @@ structural text segmentation (front-page/header block), and entity recognition
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -84,6 +85,24 @@ class SpacyManager:
             cls._loaded_model_name = model_name
             return nlp
         except Exception as exc:
+            # If model is not found and not in offline mode, attempt automatic download
+            is_offline = (
+                os.environ.get("HF_HUB_OFFLINE") == "1"
+                or os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+                or os.environ.get("ORDINALE_OFFLINE") == "1"
+            )
+            if not is_offline and model_name == "en_core_web_sm":
+                try:
+                    from spacy.cli import download
+                    logger.info("Attempting automatic download of spaCy model '%s'...", model_name)
+                    download(model_name)
+                    nlp = spacy.load(model_name, disable=pipes_to_disable)
+                    cls._nlp_instance = nlp
+                    cls._loaded_model_name = model_name
+                    return nlp
+                except Exception as dl_err:
+                    logger.debug("Automatic spaCy model download failed: %s", dl_err)
+
             logger.warning(
                 "Could not load spaCy model '%s' (%s). Falling back to blank English pipeline.",
                 model_name,
@@ -176,6 +195,30 @@ class FilenamePreprocessor:
                     persons.append(ent.text.strip())
                 elif ent.label_ == "ORG":
                     orgs.append(ent.text.strip())
+
+        # Fallback: if NER is absent or found no persons, extract capitalized name tokens
+        if not persons:
+            blacklist = set(t.lower() for t in found_terms) | {
+                "draft", "v1", "v2", "final", "copy", "paper", "term", "essay",
+                "lab", "homework", "hw", "assignment", "project", "thesis",
+                "dissertation", "midterm", "syllabus", "doc", "pdf", "notes",
+            }
+            words = clean_text.split()
+            current_name: List[str] = []
+            for w in words:
+                if (
+                    w.isalpha()
+                    and w[0].isupper()
+                    and w.lower() not in blacklist
+                    and not any(w.upper() in c.upper() for c in found_codes)
+                ):
+                    current_name.append(w)
+                else:
+                    if current_name:
+                        persons.append(" ".join(current_name))
+                        current_name = []
+            if current_name:
+                persons.append(" ".join(current_name))
 
         return {
             "raw_filename": filename,
@@ -293,11 +336,53 @@ class DocumentEntityExtractor:
         text_lower = text.lower()
         for kw in self.university_keywords:
             if kw in text_lower:
-                # Find matching line or phrase
-                for match in re.finditer(rf"\b([A-Z][A-Za-z\s&'-]+{kw}[A-Za-z\s&'-]*)\b", text, re.IGNORECASE):
-                    val = match.group(0).strip()
-                    if val and val not in universities and len(val) < 60:
-                        universities.append(val)
+                for line in text.splitlines():
+                    line_clean = line.strip(" \t\r\n,.;:-")
+                    if kw in line_clean.lower() and len(line_clean) < 80:
+                        match = re.search(
+                            rf"\b((?:[A-Za-z \t&',.-]+\s+)?{kw}(?:\s+[A-Za-z \t&',.-]+)?)\b",
+                            line_clean,
+                            re.IGNORECASE,
+                        )
+                        if match:
+                            val = match.group(0).strip(" \t,.;:-")
+                            if val and val not in universities and len(val) < 60:
+                                universities.append(val)
+
+        # Fallback / augment: regex / heuristic search for person names if NER is missing or empty
+        if not persons:
+            # 1. Prefixed person lines (Student Name:, Author:, Instructor:, etc.)
+            prefix_pat = re.compile(
+                r"(?i)\b(?:student(?:\s+name)?|author|instructor|faculty|advisor|by|submitted\s+by|prepared\s+by|presenter|professor)\s*[:\-–]\s*(?:(?:prof|dr|mr|ms|mrs)\.?\s+)?([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)+)"
+            )
+            for m in prefix_pat.finditer(text):
+                val = m.group(1).strip(" \t,.;:-")
+                if val and val not in persons:
+                    persons.append(val)
+
+            # 2. Line-by-line standalone name patterns on header/front page
+            header_blacklist = {
+                "university", "college", "department", "school", "institute", "academy",
+                "proceedings", "conference", "journal", "abstract", "introduction",
+                "final", "project", "term", "paper", "report", "assignment", "homework",
+                "exam", "course", "title", "table", "contents", "references", "syllabus",
+                "chapter", "section", "computer", "science", "operating", "systems",
+                "principles", "december", "january", "february", "march", "april", "may",
+                "june", "july", "august", "september", "october", "november",
+            }
+            for line in text.splitlines()[:25]:
+                sline = line.strip()
+                if not sline or len(sline) > 50:
+                    continue
+                # Check for comma-separated authors or single author
+                parts = [p.strip() for p in sline.split(",") if p.strip()]
+                for p in parts:
+                    words = p.split()
+                    if 2 <= len(words) <= 3:
+                        if all(w[0].isupper() and w[1:].isalpha() for w in words):
+                            if not any(w.lower() in header_blacklist for w in words):
+                                if p not in persons:
+                                    persons.append(p)
 
         return {
             "persons": persons,

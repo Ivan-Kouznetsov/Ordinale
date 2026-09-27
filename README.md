@@ -156,6 +156,9 @@ pip install --upgrade pip
 # Install project dependencies
 pip install -r requirements.txt
 
+# Download the lightweight spaCy English NLP model for entity and header heuristics:
+python -m spacy download en_core_web_sm
+
 # (Optional) Install Ordinale in editable mode for the CLI commands:
 pip install -e .
 ```
