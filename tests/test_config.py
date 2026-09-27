@@ -301,3 +301,51 @@ university_keywords = ["polytechnic", "academy"]
     assert names.student_header_synergy_bonus == 4.0
     assert names.filename_name_bonus == 2.0
     assert names.university_keywords == ["polytechnic", "academy"]
+
+
+def test_load_scratch_notes_heuristics_custom_toml(tmp_path: Path):
+    toml_file = tmp_path / "ordinale.toml"
+    toml_content = """
+[heuristics.scratch_notes]
+enabled = true
+format_prior_text = 2.0
+format_prior_doc = 1.5
+filename_bonus = 2.5
+filename_keywords = ["notes", "minutes", "standup"]
+content_markers = ["action items", "agenda"]
+override_threshold = 3.0
+"""
+    toml_file.write_text(toml_content, encoding="utf-8")
+    loaded = load_settings(config_path=toml_file)
+
+    scratch = loaded.heuristics.scratch_notes
+    assert scratch.enabled is True
+    assert scratch.format_prior_text == 2.0
+    assert scratch.format_prior_doc == 1.5
+    assert scratch.filename_bonus == 2.5
+    assert scratch.filename_keywords == ["notes", "minutes", "standup"]
+    assert scratch.content_markers == ["action items", "agenda"]
+    assert scratch.override_threshold == 3.0
+
+
+def test_load_web_snapshots_heuristics_custom_toml(tmp_path: Path):
+    toml_file = tmp_path / "ordinale.toml"
+    toml_content = """
+[heuristics.web_snapshots]
+enabled = true
+html_extensions = [".html", ".webarchive"]
+html_format_prior = 4.0
+article_header_patterns = ["(?i)source:"]
+article_header_bonus = 3.0
+non_web_text_penalty = 3.5
+"""
+    toml_file.write_text(toml_content, encoding="utf-8")
+    loaded = load_settings(config_path=toml_file)
+
+    web = loaded.heuristics.web_snapshots
+    assert web.enabled is True
+    assert web.html_extensions == [".html", ".webarchive"]
+    assert web.html_format_prior == 4.0
+    assert web.article_header_patterns == ["(?i)source:"]
+    assert web.article_header_bonus == 3.0
+    assert web.non_web_text_penalty == 3.5

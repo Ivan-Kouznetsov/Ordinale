@@ -128,6 +128,7 @@ non_course_prefixes = [
     "bill", "acct", "card", "call", "code", "dial", "dept", "dest", "rate",
     "file", "stat", "view", "cost", "plus", "paid", "fees", "gain", "loss",
     "note", "text", "term", "type", "user", "time", "hour", "mins", "secs",
+    "bug", "err", "issue", "task", "ver",
 ]
 
 [heuristics.education_academic.names]
@@ -146,3 +147,51 @@ university_keywords = [
     "academy",
     "campus",
 ]
+
+[heuristics.scratch_notes]
+enabled = true
+filename_keywords = [
+    "note", "notes", "scratch", "scratchpad", "meeting", "minutes",
+    "todo", "draft", "wip", "brainstorm", "sync", "standup", "memo",
+    "quicknotes", "agenda", "script", "run", "cmd", "command",
+    "commands", "steps", "setup", "install", "cheatsheet", "howto",
+    "sh", "bash", "terminal",
+]
+content_markers = [
+    "meeting notes", "action items", "next steps", "attendees",
+    "participants", "agenda", "quick notes", "brain dump", "sync notes",
+]
+checklist_patterns = [
+    '[-*]\s*\[[ xX]\]',
+    '\b(TODO|FIXME|TASK|ACTION ITEM)[\s:]',
+]
+command_patterns = [
+    '^\s*(?:python|pip|npm|npx|node|docker|git|cargo|curl|wget|bash|sh|pwsh|powershell|uv|pytest)\b',
+    '\s--[a-z0-9\-]+|\s-[a-zA-Z]\b',
+    '[A-Za-z]:\\[^\r\n]+|/(?:usr|bin|var|etc|home)/',
+    '(?i)\b(run script|how to run|usage:|command:|terminal:)',
+]
+format_prior_text = 1.5
+format_prior_doc = 1.0
+filename_bonus = 2.0
+content_marker_weight = 1.5
+content_marker_max_score = 3.5
+checklist_bonus = 1.5
+command_bonus = 2.0
+bullet_ratio_threshold = 0.30
+bullet_ratio_bonus = 1.0
+override_threshold = 2.5
+competitor_penalty = 4.0
+
+[heuristics.web_snapshots]
+enabled = true
+html_extensions = [".html", ".htm", ".mhtml"]
+html_format_prior = 3.0
+article_header_patterns = [
+    '(?i)\b(?:url|source|retrieved from):\s*https?://',
+    '(?i)\b\d+\s*min read\b',
+    '(?i)\bpublished (?:on|in):',
+    '(?i)\b(?:archive\.today|wayback machine|pocket|readwise|substack)\b',
+]
+article_header_bonus = 2.5
+non_web_text_penalty = 3.0
