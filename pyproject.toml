@@ -31,6 +31,7 @@ dependencies = [
     "pypdf>=4.0.0",
     "beautifulsoup4>=4.12.0",
     "fonttools>=4.50.0",
+    "spacy>=3.7.0",
 ]
 
 [project.optional-dependencies]
@@ -54,4 +55,14 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 markers = [
     "requires_model: Tests requiring the full Hugging Face Laya model checkpoint downloaded locally.",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu132"
+url = "https://download.pytorch.org/whl/cu132"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu132" },
 ]

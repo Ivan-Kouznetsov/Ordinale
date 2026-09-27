@@ -150,10 +150,13 @@ def run_scan_and_organize(
     max_workers: Optional[int] = None,
     preserve_folders: bool = True,
     extensions: Optional[List[str]] = None,
+    json_output: Optional[str] = None,
 ) -> None:
     """Scans directory, displays preview, and executes moves if requested."""
+    active_console = Console(stderr=True) if json_output == "-" else console
+
     scan_mode = "recursively" if recursive else "top-level only"
-    console.rule(f"[bold cyan]Scanning '{source_dir}' for Documents ({scan_mode})[/bold cyan]")
+    active_console.rule(f"[bold cyan]Scanning '{source_dir}' for Documents ({scan_mode})[/bold cyan]")
 
     files = engine.scan_directory(
         source_dir,
@@ -164,11 +167,29 @@ def run_scan_and_organize(
     if not files:
         exts_list = sorted(list(engine.extractor.supported_extensions.keys()))
         exts_str = ", ".join(exts_list)
-        console.print(f"[yellow]No supported document files ({exts_str}) found in '{source_dir}'.[/yellow]")
+        active_console.print(f"[yellow]No supported document files ({exts_str}) found in '{source_dir}'.[/yellow]")
+        if json_output:
+            empty_payload = {
+                "status": "completed",
+                "cancelled": False,
+                "source_dir": str(source_dir),
+                "target_root": str(target_root),
+                "total_files": 0,
+                "analyzed_count": 0,
+                "plans": [],
+            }
+            if json_output == "-":
+                sys.stdout.write(json.dumps(empty_payload, indent=2) + "\n")
+                sys.stdout.flush()
+            else:
+                Path(json_output).write_text(json.dumps(empty_payload, indent=2), encoding="utf-8")
         return
 
     workers_desc = f"{max_workers} worker(s)" if max_workers else "auto parallel workers"
-    console.print(f"[bold green]Found {len(files)} document(s). Analyzing in-memory with Laya ({workers_desc})...[/bold green]\n")
+    active_console.print(f"[bold green]Found {len(files)} document(s). Analyzing in-memory with Laya ({workers_desc})...[/bold green]\n")
+
+    plans: List[OrganizationPlan] = []
+    was_cancelled = False
 
     with Progress(
         SpinnerColumn(),
@@ -176,7 +197,7 @@ def run_scan_and_organize(
         BarColumn(),
         TaskProgressColumn(),
         TimeElapsedColumn(),
-        console=console,
+        console=active_console,
     ) as progress:
         task_id = progress.add_task("[cyan]Analyzing documents...", total=len(files))
 
@@ -188,7 +209,7 @@ def run_scan_and_organize(
             )
 
         try:
-            plans: List[OrganizationPlan] = engine.plan_organization(
+            plans = engine.plan_organization(
                 files=files,
                 target_root=target_root,
                 source_dir=source_dir,
@@ -196,19 +217,51 @@ def run_scan_and_organize(
                 preserve_folders=preserve_folders,
                 progress_callback=_update_progress,
             )
+            was_cancelled = getattr(engine, "last_cancelled", False)
+        except KeyboardInterrupt:
+            was_cancelled = True
+            plans = getattr(engine, "last_partial_plans", [])
         except Exception as err:
             if isinstance(err, CudaDeviceError) or "cuda" in str(err).lower():
-                console.print(f"\n[bold red]Fatal CUDA Error:[/] {err}")
-                console.print("[yellow]Exiting immediately without falling back to CPU because CUDA was specified.[/yellow]")
+                active_console.print(f"\n[bold red]Fatal CUDA Error:[/] {err}")
+                active_console.print("[yellow]Exiting immediately without falling back to CPU because CUDA was specified.[/yellow]")
                 sys.exit(1)
             raise
+
+    # Handle JSON output if requested
+    if json_output:
+        payload = {
+            "status": "cancelled" if was_cancelled else "completed",
+            "cancelled": was_cancelled,
+            "source_dir": str(source_dir),
+            "target_root": str(target_root),
+            "total_files": len(files),
+            "analyzed_count": len(plans),
+            "plans": [p.to_dict() for p in plans],
+        }
+        if was_cancelled:
+            payload["message"] = (
+                f"Scan cancelled by user (Ctrl+C). "
+                f"Partial analysis for {len(plans)} of {len(files)} document(s) preserved."
+            )
+
+        json_str = json.dumps(payload, indent=2)
+
+        if json_output == "-":
+            sys.stdout.write(json_str + "\n")
+            sys.stdout.flush()
+            return
+        else:
+            Path(json_output).write_text(json_str, encoding="utf-8")
+            active_console.print(
+                f"\n[bold green]Saved JSON triage analysis ({len(plans)} document(s)) to '{json_output}'[/bold green]\n"
+            )
 
     table = Table(
         title=f"Document Triage Plan (Destination Root: '{target_root}')",
         header_style="bold magenta",
         show_lines=True,
     )
-    table.add_column("#", justify="right", width=4)
     table.add_column("Source Document", style="bold", width=30)
     table.add_column("Predicted Destination", style="cyan", width=36)
     table.add_column("Confidence", justify="center", width=12)
@@ -216,8 +269,11 @@ def run_scan_and_organize(
     table.add_column("Sensitive", justify="center", width=11)
     table.add_column("Status / Action", style="yellow", width=18)
 
-    for idx, plan in enumerate(plans, 1):
-        rel_target = plan.target_path.relative_to(target_root)
+    for plan in plans:
+        try:
+            rel_target = plan.target_path.relative_to(target_root)
+        except ValueError:
+            rel_target = plan.target_path.name
         try:
             rel_source = plan.source_path.relative_to(source_dir)
         except ValueError:
@@ -238,7 +294,6 @@ def run_scan_and_organize(
             status = "[green]MOVE[/]"
 
         table.add_row(
-            str(idx),
             str(rel_source),
             str(rel_target),
             f"[{conf_style}]{conf_str}[/]",
@@ -247,12 +302,25 @@ def run_scan_and_organize(
             status,
         )
 
-    console.print(table)
-    console.print()
+    active_console.print(table)
+    active_console.print()
+
+    # If scan was cancelled
+    if was_cancelled:
+        active_console.print(
+            Panel(
+                f"[bold yellow]Scan Cancelled by User (Ctrl+C)[/bold yellow]\n"
+                f"Partial analysis for [bold]{len(plans)}[/bold] of [bold]{len(files)}[/bold] document(s) displayed above.\n"
+                "No files were moved.",
+                title="Scan Interrupted",
+                border_style="yellow",
+            )
+        )
+        return
 
     # If dry-run mode
     if not execute:
-        console.print(
+        active_console.print(
             Panel(
                 "[bold yellow]DRY-RUN MODE:[/] No files were moved.\n"
                 f"To execute this reorganization, rerun with: [bold green]--execute[/bold green]\n"
@@ -404,6 +472,15 @@ def main() -> None:
         default=None,
         help="Path to settings file (.toml or .json).",
     )
+    parser.add_argument(
+        "--json",
+        nargs="?",
+        const="-",
+        type=str,
+        default=None,
+        metavar="FILE",
+        help="Output complete triage analysis as JSON on exit. Optionally specify an output filename (defaults to stdout).",
+    )
 
     args = parser.parse_args()
 
@@ -437,22 +514,36 @@ def main() -> None:
     elif hasattr(settings, "model") and settings.model.offline:
         offline_mode = settings.model.offline
 
+    active_console = Console(stderr=True) if args.json == "-" else console
+
     # Notify user if downloading model for the first time
     if offline_mode == "auto" and not is_model_cached():
-        console.print(
+        active_console.print(
             "[cyan]Model not found in local cache. Downloading from Hugging Face Hub for first-time setup...[/cyan]"
         )
 
     # Load classifier
     try:
-        classifier = DocumentClassifier(device=args.device, offline=offline_mode)
+        classifier = DocumentClassifier(
+            device=args.device,
+            offline=offline_mode,
+            settings=settings,
+        )
     except (CudaDeviceError, RuntimeError) as err:
-        console.print(f"[bold red]Device Error:[/] {err}")
+        active_console.print(f"[bold red]Device Error:[/] {err}")
         if args.device and "cuda" in str(args.device).lower():
-            console.print("[yellow]Exiting immediately without falling back to CPU because CUDA was specified.[/yellow]")
+            active_console.print("[yellow]Exiting immediately without falling back to CPU because CUDA was specified.[/yellow]")
         sys.exit(1)
 
     engine = OrganizerEngine(classifier=classifier, settings=settings)
+
+    device_str = str(getattr(classifier, "device", "cpu")).lower()
+    if "cuda" in device_str:
+        import torch
+        gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "GPU"
+        active_console.print(f"[dim]Hardware Acceleration:[/] [bold green]CUDA ({gpu_name})[/]")
+    else:
+        active_console.print(f"[dim]Hardware Acceleration:[/] [bold yellow]{device_str.upper()}[/]")
 
     try:
         if args.samples:
@@ -470,11 +561,12 @@ def main() -> None:
                 recursive=not args.no_recursive,
                 max_workers=workers,
                 preserve_folders=not args.no_preserve_folders,
+                json_output=args.json,
             )
     except (CudaDeviceError, RuntimeError) as err:
         if (args.device and "cuda" in str(args.device).lower()) or "cuda" in str(err).lower():
-            console.print(f"\n[bold red]Fatal CUDA Error:[/] {err}")
-            console.print("[yellow]Exiting immediately without falling back to CPU because CUDA was specified.[/yellow]")
+            active_console.print(f"\n[bold red]Fatal CUDA Error:[/] {err}")
+            active_console.print("[yellow]Exiting immediately without falling back to CPU because CUDA was specified.[/yellow]")
             sys.exit(1)
         raise
 

@@ -37,6 +37,22 @@ class OrganizationPlan:
     reason: str
     is_duplicate: bool = False
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Converts plan to serializable dictionary."""
+        return {
+            "source_path": str(self.source_path),
+            "target_path": str(self.target_path),
+            "file_sha256": self.file_sha256,
+            "category": self.category,
+            "subcategory": self.subcategory,
+            "confidence": round(self.confidence, 4),
+            "retention": self.retention,
+            "is_sensitive": self.is_sensitive,
+            "action": self.action,
+            "reason": self.reason,
+            "is_duplicate": self.is_duplicate,
+        }
+
 
 class OrganizerEngine:
     """Orchestrates document scanning, categorization, safe movement, and rollback."""
@@ -59,6 +75,8 @@ class OrganizerEngine:
         else:
             self.extractor = DocumentTextExtractor()
         self.classifier = classifier
+        self.last_cancelled: bool = False
+        self.last_partial_plans: List[OrganizationPlan] = []
 
     def scan_directory(
         self,
@@ -273,25 +291,38 @@ class OrganizerEngine:
         ] = [None] * total_files
         completed_count = 0
 
+        self.last_cancelled = False
+        self.last_partial_plans = []
+
         if effective_workers > 1:
             with ThreadPoolExecutor(max_workers=effective_workers) as executor:
                 future_to_idx = {
                     executor.submit(_analyze_single, f): idx for idx, f in enumerate(files)
                 }
-                for future in as_completed(future_to_idx):
-                    idx = future_to_idx[future]
-                    res = future.result()
+                try:
+                    for future in as_completed(future_to_idx):
+                        idx = future_to_idx[future]
+                        res = future.result()
+                        analyzed_results[idx] = res
+                        completed_count += 1
+                        if progress_callback:
+                            progress_callback(completed_count, total_files, res[0])
+                except KeyboardInterrupt:
+                    self.last_cancelled = True
+                    try:
+                        executor.shutdown(wait=False, cancel_futures=True)
+                    except Exception:
+                        pass
+        else:
+            try:
+                for idx, file_path in enumerate(files):
+                    res = _analyze_single(file_path)
                     analyzed_results[idx] = res
                     completed_count += 1
                     if progress_callback:
-                        progress_callback(completed_count, total_files, res[0])
-        else:
-            for idx, file_path in enumerate(files):
-                res = _analyze_single(file_path)
-                analyzed_results[idx] = res
-                completed_count += 1
-                if progress_callback:
-                    progress_callback(completed_count, total_files, file_path)
+                        progress_callback(completed_count, total_files, file_path)
+            except KeyboardInterrupt:
+                self.last_cancelled = True
 
         # Sequential destination path allocation & collision resolution
         plans: List[OrganizationPlan] = []
@@ -299,7 +330,8 @@ class OrganizerEngine:
         resolved_source_dir = Path(source_dir).resolve() if source_dir else None
 
         for item in analyzed_results:
-            assert item is not None
+            if item is None:
+                continue
             file_path, file_hash, doc, res, exc = item
 
             if exc is not None or not res:
@@ -367,6 +399,7 @@ class OrganizerEngine:
             )
             plans.append(plan)
 
+        self.last_partial_plans = plans
         return plans
 
     def execute_plans(

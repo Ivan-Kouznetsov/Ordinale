@@ -4,6 +4,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 import pytest
 
+from ordinale.config import (
+    CourseCodeHeuristicsConfig,
+    EducationAcademicHeuristicsConfig,
+    HeuristicsConfig,
+)
 from ordinale.doc_classifier import (
     DOCUMENT_QUESTIONS,
     CATEGORY_DESTINATIONS,
@@ -11,6 +16,8 @@ from ordinale.doc_classifier import (
     EDUCATION_SUBDESTINATIONS,
     DocumentClassifier,
     disambiguate_education_academic,
+    evaluate_course_codes,
+    is_valid_course_code,
     is_model_cached,
 )
 
@@ -175,6 +182,140 @@ def test_disambiguate_education_academic_format_priors():
     # Neutral text with .docx format prior
     res_docx = disambiguate_education_academic("File: submission.docx\nDraft by Student")
     assert res_docx["winner"] == "school"
+
+
+def test_course_code_common_vs_uncommon_prefix_it_vs_nw():
+    # IT300 is more likely to be a course than NW300
+    prompt_it = "Content: IT300 final project requirements."
+    prompt_nw = "Content: NW300 final project requirements."
+
+    res_it = disambiguate_education_academic(prompt_it)
+    res_nw = disambiguate_education_academic(prompt_nw)
+
+    # IT300 gets common prefix bonus; NW300 gets uncommon prefix penalty
+    assert res_it["scores"]["school"] > res_nw["scores"]["school"]
+    assert res_it["probabilities"]["school"] > res_nw["probabilities"]["school"]
+
+    eval_it = evaluate_course_codes(prompt_it)
+    eval_nw = evaluate_course_codes(prompt_nw)
+
+    assert eval_it["candidates"][0]["is_common"] is True
+    assert eval_nw["candidates"][0]["is_common"] is False
+    assert eval_it["total_score"] > eval_nw["total_score"]
+
+
+def test_course_code_proximity_to_name_and_title():
+    # If near name or essay title: increase confidence; otherwise (isolated) decrease it
+    prompt_near = (
+        "File: doc.txt\n"
+        "Student Name: John Doe\n"
+        "Title: Distributed Computing Systems\n"
+        "Course: IT 300\n"
+    )
+    prompt_isolated = (
+        "File: doc.txt\n"
+        "A long paragraph discussing random data.\n"
+        "There is an isolated code IT 300 listed without context.\n"
+        "More arbitrary content follows.\n"
+    )
+
+    eval_near = evaluate_course_codes(prompt_near)
+    eval_isolated = evaluate_course_codes(prompt_isolated)
+
+    assert eval_near["candidates"][0]["near_name"] is True
+    assert eval_near["candidates"][0]["near_title"] is True
+    assert eval_near["candidates"][0]["isolated"] is False
+
+    assert eval_isolated["candidates"][0]["near_name"] is False
+    assert eval_isolated["candidates"][0]["near_title"] is False
+    assert eval_isolated["candidates"][0]["isolated"] is True
+
+    # Higher score and confidence when in proximity to name/title
+    assert eval_near["total_score"] > eval_isolated["total_score"]
+
+    res_near = disambiguate_education_academic(prompt_near)
+    res_isolated = disambiguate_education_academic(prompt_isolated)
+    assert res_near["scores"]["school"] > res_isolated["scores"]["school"]
+
+
+def test_optional_signals_in_disambiguation():
+    prompt = "Student: Alice\nTitle: Operating Systems\nIT 300"
+
+    # 1. Signals disabled (record_signals=False)
+    res_no_sig = disambiguate_education_academic(prompt, record_signals=False)
+    assert res_no_sig["signals"] == []
+    # Evidence is still computed internally
+    assert res_no_sig["evidence"]["course_codes"] == ["IT 300"]
+
+    # 2. Concise signals (record_signals=True, detailed_signals=False)
+    res_concise = disambiguate_education_academic(prompt, record_signals=True, detailed_signals=False)
+    assert len(res_concise["signals"]) > 0
+    assert any("Course code: ['IT 300']" in s for s in res_concise["signals"])
+
+    # 3. Detailed signals (record_signals=True, detailed_signals=True)
+    res_detailed = disambiguate_education_academic(prompt, record_signals=True, detailed_signals=True)
+    assert any("+common prefix" in s and "+near name" in s for s in res_detailed["signals"])
+
+
+def test_custom_heuristics_override_prefix():
+    # When NW is explicitly configured as a common prefix in custom settings
+    custom_cfg = EducationAcademicHeuristicsConfig(
+        course_codes=CourseCodeHeuristicsConfig(common_prefixes=["nw", "cs"])
+    )
+    prompt = "Content: NW300 assignment."
+    res = disambiguate_education_academic(prompt, heuristics=custom_cfg)
+    assert res["evidence"]["course_candidates"][0]["is_common"] is True
+
+
+def test_student_header_synergy_boosts_school_coursework():
+    # Student name + university name + course code on front page
+    prompt = (
+        "File: final_project.pdf\n"
+        "Harvard University\n"
+        "Alice Smith\n"
+        "CS 181 Final Project\n"
+        "December 2024\n"
+        "\n"
+        "Abstract / Introduction: In this project, we explore deep neural networks..."
+    )
+    res = disambiguate_education_academic(prompt, file_name="final_project.pdf")
+
+    assert res["winner"] == "school"
+    assert res["evidence"]["has_student_synergy"] is True
+    assert any("Student header synergy:" in s for s in res["signals"])
+    assert any("Harvard" in u for u in res["evidence"]["universities"])
+    assert any("Alice Smith" in p for p in res["evidence"]["persons"])
+
+
+def test_academic_paper_with_university_affiliation():
+    # Research paper with university affiliation and academic publisher / DOI / proceedings
+    prompt = (
+        "File: paper.pdf\n"
+        "Proceedings of IEEE Conference on Computer Vision\n"
+        "Stanford University\n"
+        "John Miller, Sarah Connor\n"
+        "doi: 10.1109/CVPR.2024.123456\n"
+        "\n"
+        "Abstract: We propose a novel transformer architecture..."
+    )
+    res = disambiguate_education_academic(prompt, file_name="paper.pdf")
+
+    assert res["winner"] == "academic"
+    assert res["evidence"]["has_student_synergy"] is False
+    assert any("Affiliated institution:" in s for s in res["signals"])
+
+
+def test_course_code_proximity_via_nlp_person_without_prefix():
+    # Adjacent line has raw person name 'Alice Smith' without 'Student:' prefix
+    prompt = (
+        "Distributed Systems Term Project\n"
+        "Alice Smith\n"
+        "CS 350\n"
+    )
+    eval_res = evaluate_course_codes(prompt)
+    assert len(eval_res["candidates"]) > 0
+    assert eval_res["candidates"][0]["near_name"] is True
+
 
 
 @patch("laya.load")
