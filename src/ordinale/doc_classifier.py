@@ -17,7 +17,9 @@ from ordinale.config import (
     CourseCodeHeuristicsConfig,
     EducationAcademicHeuristicsConfig,
     HeuristicsConfig,
+    ScratchNotesHeuristicsConfig,
     Settings,
+    WebSnapshotsHeuristicsConfig,
 )
 
 # Disable symlinks on Windows to prevent WinError 1314 when running without Admin/Developer mode
@@ -42,11 +44,11 @@ DOCUMENT_QUESTIONS: Dict[str, Any] = {
             "receipts": "purchase receipts, order confirmations, vendor invoices, utility bills, travel expenses",
             "contracts": "contracts, non-disclosure agreements (NDAs), residential leases, employment agreements, terms of service",
             "education_academic": "school homework, university problem sets, lab reports, essay drafts, course syllabi, lecture notes, peer-reviewed research papers, conference preprints (arXiv), academic journal articles, literature reviews",
-            "web_snapshots": "saved web pages, HTML articles, blog clippings, online newsletter exports",
+            "web_snapshots": "saved web pages, HTML online articles, blog clippings, journalistic newsletter exports, reading material clipped from websites",
             "resumes": "resumes, curriculum vitae (CV), cover letters, job applications, professional bios",
             "personal_id": "medical records, insurance policies, vehicle registration, official government identity forms",
             "manuals": "product user manuals, appliance guides, technical documentation, hardware setup instructions",
-            "scratch_notes": "scratchpad notes, quick rough meeting minutes, brain dumps, temporary export files",
+            "scratch_notes": "scratchpad notes, quick rough meeting minutes, to-do lists, command snippets, script runbooks, personal cheat sheets, brain dumps, temporary drafts",
         },
     },
     "financial_type": {
@@ -181,6 +183,7 @@ COMMON_NON_COURSE_PREFIXES = {
     "bill", "acct", "card", "call", "code", "dial", "dept", "dest", "rate",
     "file", "stat", "view", "cost", "plus", "paid", "fees", "gain", "loss",
     "note", "text", "term", "type", "user", "time", "hour", "mins", "secs",
+    "bug", "err", "issue", "task", "ver",
 }
 
 
@@ -511,6 +514,295 @@ def disambiguate_education_academic(
         "evidence": evidence,
         "scores": {"academic": round(score_academic, 2), "school": round(score_school, 2)},
     }
+
+
+def evaluate_scratch_notes(
+    prompt_text: str,
+    file_name: str = "",
+    file_extension: str = "",
+    heuristics: Optional[ScratchNotesHeuristicsConfig] = None,
+    record_signals: bool = True,
+    detailed_signals: bool = False,
+) -> Dict[str, Any]:
+    """Evaluates whether a document matches patterns characteristic of notes, scratchpads,
+    meeting minutes, or rough drafts.
+
+    Heuristic dimensions:
+      1. File extension priors: .txt, .md, .markdown receive high prior; .docx, .rtf receive moderate prior.
+      2. Negative competitor patterns: formal tax/CRA terms, invoices, legal contracts, research preprints/dois, resumes zero out the format prior and penalize notes likelihood.
+      3. Filename indicators: 'notes', 'minutes', 'todo', 'meeting', 'scratch', 'draft', etc.
+      4. Content markers: 'meeting notes', 'action items', 'attendees:', 'agenda:', 'sync notes', etc.
+      5. Checklist and task syntax: '- [ ]', 'TODO:', 'FIXME:', 'ACTION:'.
+      6. Informal bullet / line structure: high proportion of bulleted list items vs long narrative paragraphs.
+    """
+    if heuristics is None:
+        heuristics = ScratchNotesHeuristicsConfig()
+
+    if not heuristics.enabled:
+        return {
+            "score": 0.0,
+            "is_strong_candidate": False,
+            "confidence": 0.0,
+            "signals": [],
+            "evidence": {},
+            "scores": {"total_score": 0.0},
+        }
+
+    # Extract file_name and extension if not provided
+    if not file_name:
+        match = re.search(r"File:\s*([^\r\n]+)", prompt_text)
+        if match:
+            file_name = match.group(1).strip()
+
+    ext = (file_extension or (Path(file_name).suffix.lower() if file_name else "")).lower()
+
+    # Extract content body (skipping prompt metadata headers if present)
+    snippet_match = re.search(r"Content Snippet:\s*(.*)", prompt_text, re.DOTALL | re.IGNORECASE)
+    content_body = snippet_match.group(1).strip() if snippet_match else prompt_text
+    content_lower = content_body.lower()
+
+    signals: List[str] = []
+
+    # 1. Format prior
+    format_prior = 0.0
+    if ext in (".txt", ".md", ".markdown"):
+        format_prior = heuristics.format_prior_text
+        if record_signals:
+            signals.append(f"Text format prior: {ext} (+{format_prior:.1f})")
+    elif ext in (".docx", ".rtf", ".doc", ".odt"):
+        format_prior = heuristics.format_prior_doc
+        if record_signals:
+            signals.append(f"Document format prior: {ext} (+{format_prior:.1f})")
+
+    # 2. Negative competitor patterns check
+    found_competitors: List[str] = []
+    compiled_competitors = [
+        re.compile(p, re.IGNORECASE) if isinstance(p, str) else p
+        for p in heuristics.competitor_patterns
+    ]
+    for pat in compiled_competitors:
+        m = pat.search(content_lower)
+        if m:
+            found_competitors.append(m.group(0))
+
+    competitor_penalty = 0.0
+    if found_competitors:
+        competitor_penalty = len(found_competitors) * heuristics.competitor_penalty
+        format_prior = 0.0  # Clear format prior if competitor markers exist
+        if record_signals:
+            signals.append(f"Competitor markers detected: {found_competitors[:3]} (-{competitor_penalty:.1f})")
+
+    # 3. Filename cues
+    filename_score = 0.0
+    matched_fn_keywords: List[str] = []
+    if file_name:
+        fn_stem = Path(file_name).stem.lower()
+        for kw in heuristics.filename_keywords:
+            if re.search(r"(?i)(?:^|[_\s\.-])" + re.escape(kw) + r"(?:$|[_\s\.-])", fn_stem) or kw in fn_stem:
+                matched_fn_keywords.append(kw)
+
+    if matched_fn_keywords:
+        filename_score = heuristics.filename_bonus
+        if record_signals:
+            signals.append(f"Filename note cue: {matched_fn_keywords[:3]} (+{filename_score:.1f})")
+
+    # 4. Content markers & headings
+    matched_markers: List[str] = []
+    for marker in heuristics.content_markers:
+        if marker in content_lower:
+            matched_markers.append(marker)
+
+    content_marker_score = 0.0
+    if matched_markers:
+        content_marker_score = min(
+            heuristics.content_marker_max_score,
+            len(matched_markers) * heuristics.content_marker_weight,
+        )
+        if record_signals:
+            signals.append(f"Content note markers: {matched_markers[:3]} (+{content_marker_score:.1f})")
+
+    # 5. Checklist and task items
+    checklist_matches: List[str] = []
+    for pat_str in heuristics.checklist_patterns:
+        pat = re.compile(pat_str, re.IGNORECASE) if isinstance(pat_str, str) else pat_str
+        for m in pat.finditer(content_body):
+            checklist_matches.append(m.group(0).strip())
+
+    checklist_score = 0.0
+    if checklist_matches:
+        checklist_score = heuristics.checklist_bonus
+        if record_signals:
+            signals.append(f"Checklist/task syntax: {checklist_matches[:3]} (+{checklist_score:.1f})")
+
+    # 6. Command and script execution syntax
+    command_matches: List[str] = []
+    for pat_str in getattr(heuristics, "command_patterns", []):
+        pat = re.compile(pat_str, re.IGNORECASE | re.MULTILINE) if isinstance(pat_str, str) else pat_str
+        for m in pat.finditer(content_body):
+            command_matches.append(m.group(0).strip())
+
+    command_score = 0.0
+    if command_matches:
+        command_score = getattr(heuristics, "command_bonus", 2.0)
+        if record_signals:
+            signals.append(f"Command/script syntax: {command_matches[:3]} (+{command_score:.1f})")
+
+    # 7. Informal bullet / line structure
+    non_empty_lines = [l.strip() for l in content_body.splitlines() if l.strip()]
+    bullet_lines = [
+        l for l in non_empty_lines
+        if l.startswith(("- ", "* ", "• ", "+ ", "- [", "* [")) or re.match(r"^\d+[\.\)]\s+", l)
+    ]
+    bullet_ratio = len(bullet_lines) / max(1, len(non_empty_lines))
+    bullet_score = 0.0
+    if len(non_empty_lines) >= 2 and bullet_ratio >= heuristics.bullet_ratio_threshold:
+        bullet_score = heuristics.bullet_ratio_bonus
+        if record_signals:
+            signals.append(f"Bullet list structure: {bullet_ratio:.0%} lines (+{bullet_score:.1f})")
+
+    total_positive = (
+        format_prior
+        + filename_score
+        + content_marker_score
+        + checklist_score
+        + command_score
+        + bullet_score
+    )
+    total_score = max(0.0, total_positive - competitor_penalty)
+
+    # Strong candidate check: needs to meet threshold, have no competitor markers, and have concrete evidence beyond just format
+    has_concrete_signal = bool(
+        matched_fn_keywords
+        or matched_markers
+        or checklist_matches
+        or command_matches
+        or (bullet_score > 0 and len(non_empty_lines) >= 3)
+    )
+    is_strong = (total_score >= heuristics.override_threshold) and (len(found_competitors) == 0) and has_concrete_signal
+
+    # Calibrate confidence
+    p_notes = 1.0 / (1.0 + math.exp(-(total_score - 1.5)))
+    conf = round(p_notes, 4)
+
+    evidence = {
+        "format": ext,
+        "format_prior": round(format_prior, 2),
+        "filename_matches": matched_fn_keywords,
+        "content_markers": matched_markers,
+        "checklist_matches": checklist_matches[:5],
+        "command_matches": command_matches[:5],
+        "bullet_ratio": round(bullet_ratio, 3),
+        "competitor_matches": found_competitors,
+        "is_strong_candidate": is_strong,
+    }
+
+    return {
+        "score": round(total_score, 2),
+        "is_strong_candidate": is_strong,
+        "confidence": conf,
+        "signals": signals if record_signals else [],
+        "evidence": evidence,
+        "scores": {
+            "format_prior": round(format_prior, 2),
+            "filename_bonus": round(filename_score, 2),
+            "content_markers": round(content_marker_score, 2),
+            "checklists": round(checklist_score, 2),
+            "commands": round(command_score, 2),
+            "bullet_ratio": round(bullet_score, 2),
+            "competitor_penalty": round(competitor_penalty, 2),
+            "total_score": round(total_score, 2),
+        },
+    }
+
+
+def evaluate_web_snapshots(
+    prompt_text: str,
+    file_name: str = "",
+    file_extension: str = "",
+    heuristics: Optional[WebSnapshotsHeuristicsConfig] = None,
+    record_signals: bool = True,
+    detailed_signals: bool = False,
+) -> Dict[str, Any]:
+    """Evaluates whether a document matches patterns of web clippings, HTML articles,
+    or newsletter exports versus local notes and plain text scripts.
+    """
+    if heuristics is None:
+        heuristics = WebSnapshotsHeuristicsConfig()
+
+    if not heuristics.enabled:
+        return {
+            "score": 0.0,
+            "is_html": False,
+            "has_web_headers": False,
+            "signals": [],
+            "evidence": {},
+        }
+
+    if not file_name:
+        match = re.search(r"File:\s*([^\r\n]+)", prompt_text)
+        if match:
+            file_name = match.group(1).strip()
+
+    ext = (file_extension or (Path(file_name).suffix.lower() if file_name else "")).lower()
+
+    snippet_match = re.search(r"Content Snippet:\s*(.*)", prompt_text, re.DOTALL | re.IGNORECASE)
+    content_body = snippet_match.group(1).strip() if snippet_match else prompt_text
+
+    signals: List[str] = []
+    score = 0.0
+
+    # 1. HTML format check
+    is_html_ext = ext in heuristics.html_extensions
+    html_tag_pattern = re.compile(
+        r"<!DOCTYPE html|<html[\s>]|<body[\s>]|<article[\s>]|<div[\s>]|<a\s+href=", re.IGNORECASE
+    )
+    has_html_tags = bool(html_tag_pattern.search(content_body))
+    is_html = is_html_ext or has_html_tags
+
+    if is_html:
+        score += heuristics.html_format_prior
+        if record_signals:
+            signals.append(f"HTML web format (+{heuristics.html_format_prior:.1f})")
+
+    # 2. Web article headers
+    matched_web_headers: List[str] = []
+    for pat_str in heuristics.article_header_patterns:
+        pat = re.compile(pat_str, re.IGNORECASE) if isinstance(pat_str, str) else pat_str
+        m = pat.search(content_body)
+        if m:
+            matched_web_headers.append(m.group(0).strip())
+
+    if matched_web_headers:
+        score += heuristics.article_header_bonus
+        if record_signals:
+            signals.append(f"Web article headers: {matched_web_headers[:2]} (+{heuristics.article_header_bonus:.1f})")
+
+    has_web_headers = bool(matched_web_headers)
+
+    # 3. Non-web plain text penalty
+    is_plain_non_web = ext in (".txt", ".md", ".docx", ".rtf") and not is_html and not has_web_headers
+    if is_plain_non_web:
+        score -= heuristics.non_web_text_penalty
+        if record_signals:
+            signals.append(f"Plain text non-web penalty (-{heuristics.non_web_text_penalty:.1f})")
+
+    evidence = {
+        "format": ext,
+        "is_html": is_html,
+        "has_html_tags": has_html_tags,
+        "has_web_headers": has_web_headers,
+        "matched_headers": matched_web_headers,
+        "score": round(score, 2),
+    }
+
+    return {
+        "score": round(score, 2),
+        "is_html": is_html,
+        "has_web_headers": has_web_headers,
+        "signals": signals if record_signals else [],
+        "evidence": evidence,
+    }
+
 
 
 class CudaDeviceError(RuntimeError):
@@ -870,11 +1162,46 @@ class DocumentClassifier:
             and bool(course_eval["valid_codes"] or any(t in prompt_text.lower() for t in self.heuristics.education_academic.coursework_terms))
         )
 
+        # Check for scratch_notes heuristics
+        notes_cfg = getattr(self.heuristics, "scratch_notes", None)
+        notes_eval = evaluate_scratch_notes(
+            prompt_text,
+            heuristics=notes_cfg,
+            record_signals=self.heuristics.record_signals,
+            detailed_signals=self.heuristics.detailed_signals,
+        )
+
+        # Check for web_snapshots heuristics
+        web_cfg = getattr(self.heuristics, "web_snapshots", None)
+        web_eval = evaluate_web_snapshots(
+            prompt_text,
+            heuristics=web_cfg,
+            record_signals=self.heuristics.record_signals,
+            detailed_signals=self.heuristics.detailed_signals,
+        )
+
+        # Disambiguate web_snapshots vs scratch_notes when on non-web plain text or doc files
+        if cat_winner == "web_snapshots":
+            is_plain_non_web = not web_eval.get("is_html") and not web_eval.get("has_web_headers")
+            if is_plain_non_web:
+                has_notes_signals = (
+                    notes_eval.get("is_strong_candidate")
+                    or notes_eval.get("score", 0.0) >= 1.5
+                    or bool(notes_eval.get("evidence", {}).get("filename_matches"))
+                    or bool(notes_eval.get("evidence", {}).get("command_matches"))
+                )
+                if has_notes_signals or cat_conf < self.confidence_threshold:
+                    cat_winner = "scratch_notes"
+                    cat_conf = max(cat_conf, min(0.92, notes_eval["confidence"] if notes_eval["confidence"] > 0 else 0.75))
+
         # If unmistakable academic/coursework pattern is present and Laya was uncertain
         if cat_conf < self.confidence_threshold:
             if (course_eval["valid_codes"] and course_eval["total_score"] >= 2.0) or has_preprints or has_student_synergy:
                 cat_winner = "education_academic"
                 cat_conf = 0.90
+            elif notes_eval.get("is_strong_candidate"):
+                cat_winner = "scratch_notes"
+                cat_conf = max(cat_conf, min(0.92, notes_eval["confidence"]))
 
         if cat_winner == "financial":
             target_subfolder = FINANCIAL_SUBDESTINATIONS.get(fin_winner, "Financial/General")
@@ -910,6 +1237,14 @@ class DocumentClassifier:
                 cat_conf = max(cat_conf, min(0.95, round(0.2 * cat_conf + 0.8 * edu_conf, 4)))
             elif education_type["confidence"] > 0.8:
                 cat_conf = max(cat_conf, min(0.85, round(0.4 * cat_conf + 0.6 * education_type["confidence"], 4)))
+        elif cat_winner == "scratch_notes":
+            target_subfolder = CATEGORY_DESTINATIONS.get("scratch_notes", "Notes & Drafts")
+            if notes_eval.get("is_strong_candidate") and cat_conf >= self.confidence_threshold:
+                cat_conf = max(cat_conf, min(0.95, round(0.4 * cat_conf + 0.6 * notes_eval["confidence"], 4)))
+        elif cat_winner == "web_snapshots":
+            target_subfolder = CATEGORY_DESTINATIONS.get("web_snapshots", "Web Articles & Clippings")
+            if web_eval.get("is_html") or web_eval.get("has_web_headers"):
+                cat_conf = max(cat_conf, min(0.95, round(0.4 * cat_conf + 0.6 * 0.92, 4)))
         else:
             target_subfolder = CATEGORY_DESTINATIONS.get(cat_winner, "Organized/Other")
 
@@ -937,6 +1272,8 @@ class DocumentClassifier:
                 "probabilities": fin_probs,
             } if cat_winner == "financial" else None,
             "education_type": education_type,
+            "notes_type": notes_eval if (cat_winner == "scratch_notes" or notes_eval.get("is_strong_candidate")) else None,
+            "web_type": web_eval if (cat_winner == "web_snapshots" or web_eval.get("is_html")) else None,
             "retention": {
                 "score": ret_score,
                 "label": ret_label,

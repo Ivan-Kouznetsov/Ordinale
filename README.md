@@ -1,4 +1,4 @@
-# Ordinale 📁⚡
+# Ordinale
 
 > **Local, privacy-preserving document categorization and filing engine powered by Laya.**
 
@@ -55,6 +55,8 @@
      - Automatically routes documents into subfolders such as `Financial/Taxes & Government` (e.g. CRA Notices of Assessment, T4/T5 slips), `Financial/Banking`, `Financial/Investments`, `Financial/Payroll`, or `Financial/General`.
    - **Intelligent Academic vs. School Disambiguation**:
      - Distinguishes student coursework from peer-reviewed research papers using regex heuristics for course codes (e.g., `CS 240`, `BIO:101`), preprint indicators (`arXiv`, `bioRxiv`, `SSRN`), publisher markers (`IEEE`, `ACM`, `Springer`, `Nature`), and file format priors.
+   - **Heuristic Engine for Notes & Drafts**:
+     - Identifies scratchpads, meeting minutes, rough drafts, and action items using file format priors (.txt, .md, .docx, .rtf), meeting markers (Attendees:, Action items:, Agenda:), checklist/task syntax (- [ ], TODO:), informal bullet structures, and competitor pattern exclusions.
    - **Retention Scoring**:
      - Scores whether a document is ephemeral/prunable (`0`), active reference (`1`), or a permanent archive (`2`).
    - **Privacy & Sensitivity Detection**:

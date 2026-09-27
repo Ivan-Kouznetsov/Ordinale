@@ -109,6 +109,7 @@ class CourseCodeHeuristicsConfig:
             "bill", "acct", "card", "call", "code", "dial", "dept", "dest", "rate",
             "file", "stat", "view", "cost", "plus", "paid", "fees", "gain", "loss",
             "note", "text", "term", "type", "user", "time", "hour", "mins", "secs",
+            "bug", "err", "issue", "task", "ver",
         ]
     )
     proximity_window_lines: int = 3
@@ -239,6 +240,87 @@ class EducationAcademicHeuristicsConfig:
 
 
 @dataclass
+class ScratchNotesHeuristicsConfig:
+    """Heuristic settings for detecting notes, scratchpads, meeting minutes, and rough drafts."""
+
+    enabled: bool = True
+    filename_keywords: List[str] = field(
+        default_factory=lambda: [
+            "note", "notes", "scratch", "scratchpad", "meeting", "minutes",
+            "todo", "draft", "wip", "brainstorm", "sync", "standup", "memo",
+            "quicknotes", "agenda", "script", "run", "cmd", "command",
+            "commands", "steps", "setup", "install", "cheatsheet", "howto",
+            "sh", "bash", "terminal",
+        ]
+    )
+    content_markers: List[str] = field(
+        default_factory=lambda: [
+            "meeting notes", "action items", "next steps", "attendees",
+            "participants", "agenda", "quick notes", "brain dump", "sync notes",
+        ]
+    )
+    checklist_patterns: List[str] = field(
+        default_factory=lambda: [
+            r"[-*]\s*\[[ xX]\]",
+            r"\b(TODO|FIXME|TASK|ACTION ITEM)[\s:]",
+        ]
+    )
+    command_patterns: List[str] = field(
+        default_factory=lambda: [
+            r"^\s*(?:python|pip|npm|npx|node|docker|git|cargo|curl|wget|bash|sh|pwsh|powershell|uv|pytest)\b",
+            r"\s--[a-z0-9\-]+|\s-[a-zA-Z]\b",
+            r"[A-Za-z]:\\[^\r\n]+|/(?:usr|bin|var|etc|home)/",
+            r"(?i)\b(run script|how to run|usage:|command:|terminal:)",
+        ]
+    )
+    competitor_patterns: List[str] = field(
+        default_factory=lambda: [
+            r"\b(cra|canada revenue agency|notice of assessment|social insurance number)\b",
+            r"\b(tax year|net income|total payable|direct deposit advice)\b",
+            r"\b(bank statement|checking account|savings account|tfsa|rrsp|401\(k\))\b",
+            r"\b(invoice summary|invoice number|billing period|total due)\b",
+            r"\b(tenancy agreement|lease agreement|in witness whereof|non-disclosure)\b",
+            r"\b(curriculum vitae|resume\b|work experience|education:)",
+            r"\b(user guide|user manual|setup instructions|operating the monitor)\b",
+            r"\b(doi:\s*10\.\d{4,9}/|arxiv|biorxiv|proceedings of\b|peer-reviewed)\b",
+            r"\b(homework|problem set|lab report|course syllabus|term paper)\b",
+        ]
+    )
+    format_prior_text: float = 1.5
+    format_prior_doc: float = 1.0
+    filename_bonus: float = 2.0
+    content_marker_weight: float = 1.5
+    content_marker_max_score: float = 3.5
+    checklist_bonus: float = 1.5
+    command_bonus: float = 2.0
+    bullet_ratio_threshold: float = 0.30
+    bullet_ratio_bonus: float = 1.0
+    override_threshold: float = 2.5
+    competitor_penalty: float = 4.0
+
+
+@dataclass
+class WebSnapshotsHeuristicsConfig:
+    """Heuristic settings for web snapshots, clippings, and online articles."""
+
+    enabled: bool = True
+    html_extensions: List[str] = field(
+        default_factory=lambda: [".html", ".htm", ".mhtml"]
+    )
+    html_format_prior: float = 3.0
+    article_header_patterns: List[str] = field(
+        default_factory=lambda: [
+            r"(?i)\b(?:url|source|retrieved from):\s*https?://",
+            r"(?i)\b\d+\s*min read\b",
+            r"(?i)\bpublished (?:on|in):",
+            r"(?i)\b(?:archive\.today|wayback machine|pocket|readwise|substack)\b",
+        ]
+    )
+    article_header_bonus: float = 2.5
+    non_web_text_penalty: float = 3.0
+
+
+@dataclass
 class HeuristicsConfig:
     """Root container for heuristic rules and scoring."""
 
@@ -247,6 +329,12 @@ class HeuristicsConfig:
     nlp: NLPHeuristicsConfig = field(default_factory=NLPHeuristicsConfig)
     education_academic: EducationAcademicHeuristicsConfig = field(
         default_factory=EducationAcademicHeuristicsConfig
+    )
+    scratch_notes: ScratchNotesHeuristicsConfig = field(
+        default_factory=ScratchNotesHeuristicsConfig
+    )
+    web_snapshots: WebSnapshotsHeuristicsConfig = field(
+        default_factory=WebSnapshotsHeuristicsConfig
     )
 
 
@@ -503,6 +591,95 @@ def _parse_dict_to_settings(data: Dict[str, Any]) -> Settings:
         model_name=str(nlp_data.get("model_name", default_nlp.model_name)),
     )
 
+    scratch_data = heuristics_data.get("scratch_notes", {})
+    if not isinstance(scratch_data, dict):
+        scratch_data = {}
+    default_scratch = ScratchNotesHeuristicsConfig()
+    scratch_cfg = ScratchNotesHeuristicsConfig(
+        enabled=bool(scratch_data.get("enabled", default_scratch.enabled)),
+        filename_keywords=[
+            str(x).strip().lower()
+            for x in scratch_data.get("filename_keywords", default_scratch.filename_keywords)
+            if str(x).strip()
+        ],
+        content_markers=[
+            str(x).strip().lower()
+            for x in scratch_data.get("content_markers", default_scratch.content_markers)
+            if str(x).strip()
+        ],
+        checklist_patterns=[
+            str(x)
+            for x in scratch_data.get("checklist_patterns", default_scratch.checklist_patterns)
+        ],
+        command_patterns=[
+            str(x)
+            for x in scratch_data.get("command_patterns", default_scratch.command_patterns)
+        ],
+        competitor_patterns=[
+            str(x)
+            for x in scratch_data.get("competitor_patterns", default_scratch.competitor_patterns)
+        ],
+        format_prior_text=float(
+            scratch_data.get("format_prior_text", default_scratch.format_prior_text)
+        ),
+        format_prior_doc=float(
+            scratch_data.get("format_prior_doc", default_scratch.format_prior_doc)
+        ),
+        filename_bonus=float(
+            scratch_data.get("filename_bonus", default_scratch.filename_bonus)
+        ),
+        content_marker_weight=float(
+            scratch_data.get("content_marker_weight", default_scratch.content_marker_weight)
+        ),
+        content_marker_max_score=float(
+            scratch_data.get("content_marker_max_score", default_scratch.content_marker_max_score)
+        ),
+        checklist_bonus=float(
+            scratch_data.get("checklist_bonus", default_scratch.checklist_bonus)
+        ),
+        command_bonus=float(
+            scratch_data.get("command_bonus", default_scratch.command_bonus)
+        ),
+        bullet_ratio_threshold=float(
+            scratch_data.get("bullet_ratio_threshold", default_scratch.bullet_ratio_threshold)
+        ),
+        bullet_ratio_bonus=float(
+            scratch_data.get("bullet_ratio_bonus", default_scratch.bullet_ratio_bonus)
+        ),
+        override_threshold=float(
+            scratch_data.get("override_threshold", default_scratch.override_threshold)
+        ),
+        competitor_penalty=float(
+            scratch_data.get("competitor_penalty", default_scratch.competitor_penalty)
+        ),
+    )
+
+    web_data = heuristics_data.get("web_snapshots", {})
+    if not isinstance(web_data, dict):
+        web_data = {}
+    default_web = WebSnapshotsHeuristicsConfig()
+    web_cfg = WebSnapshotsHeuristicsConfig(
+        enabled=bool(web_data.get("enabled", default_web.enabled)),
+        html_extensions=[
+            normalize_extension(str(x))
+            for x in web_data.get("html_extensions", default_web.html_extensions)
+            if normalize_extension(str(x))
+        ],
+        html_format_prior=float(
+            web_data.get("html_format_prior", default_web.html_format_prior)
+        ),
+        article_header_patterns=[
+            str(x)
+            for x in web_data.get("article_header_patterns", default_web.article_header_patterns)
+        ],
+        article_header_bonus=float(
+            web_data.get("article_header_bonus", default_web.article_header_bonus)
+        ),
+        non_web_text_penalty=float(
+            web_data.get("non_web_text_penalty", default_web.non_web_text_penalty)
+        ),
+    )
+
     default_heuristics = HeuristicsConfig()
     heuristics_cfg = HeuristicsConfig(
         record_signals=bool(
@@ -513,6 +690,8 @@ def _parse_dict_to_settings(data: Dict[str, Any]) -> Settings:
         ),
         nlp=nlp_cfg,
         education_academic=edu_cfg,
+        scratch_notes=scratch_cfg,
+        web_snapshots=web_cfg,
     )
 
     return Settings(

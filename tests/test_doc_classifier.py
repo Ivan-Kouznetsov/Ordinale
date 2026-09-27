@@ -8,6 +8,8 @@ from ordinale.config import (
     CourseCodeHeuristicsConfig,
     EducationAcademicHeuristicsConfig,
     HeuristicsConfig,
+    ScratchNotesHeuristicsConfig,
+    WebSnapshotsHeuristicsConfig,
 )
 from ordinale.doc_classifier import (
     DOCUMENT_QUESTIONS,
@@ -17,6 +19,8 @@ from ordinale.doc_classifier import (
     DocumentClassifier,
     disambiguate_education_academic,
     evaluate_course_codes,
+    evaluate_scratch_notes,
+    evaluate_web_snapshots,
     is_valid_course_code,
     is_model_cached,
 )
@@ -474,3 +478,277 @@ def test_document_classifier_passes_offline(mock_configure, mock_load):
         subfolder=None,
         offline=True,
     )
+
+
+def test_evaluate_scratch_notes_text_and_doc_format_priors():
+    # Plain text format receives text format prior (1.5)
+    txt_eval = evaluate_scratch_notes("Just some short thoughts.", file_name="thoughts.txt")
+    assert txt_eval["scores"]["format_prior"] == 1.5
+    assert txt_eval["scores"]["competitor_penalty"] == 0.0
+
+    # Markdown format receives text format prior (1.5)
+    md_eval = evaluate_scratch_notes("Short bullet outline.", file_name="outline.md")
+    assert md_eval["scores"]["format_prior"] == 1.5
+
+    # docx and rtf receive doc format prior (1.0)
+    docx_eval = evaluate_scratch_notes("Project kickoff rambling.", file_name="kickoff.docx")
+    assert docx_eval["scores"]["format_prior"] == 1.0
+
+    rtf_eval = evaluate_scratch_notes("Quick memo text.", file_name="memo_quick.rtf")
+    assert rtf_eval["scores"]["format_prior"] == 1.0
+
+
+def test_evaluate_scratch_notes_meeting_markers():
+    content = """File: sync.txt
+Content Snippet:
+Meeting notes:
+Attendees: Alice, Bob, Charlie
+Action items:
+- finalize architecture doc
+- test latency
+"""
+    res = evaluate_scratch_notes(content, file_name="sync.txt", record_signals=True)
+    assert res["is_strong_candidate"] is True
+    assert res["scores"]["content_markers"] >= 1.5
+    assert any("Content note markers:" in s for s in res["signals"])
+    assert any("Bullet list structure:" in s for s in res["signals"])
+
+
+def test_evaluate_scratch_notes_checklists_and_bullets():
+    content = """File: sprint.md
+Content Snippet:
+- [ ] Implement caching layer
+- [x] Review pull request
+TODO: write unit tests
+"""
+    res = evaluate_scratch_notes(content, file_name="sprint.md", record_signals=True)
+    assert res["is_strong_candidate"] is True
+    assert res["scores"]["checklists"] == 1.5
+    assert any("Checklist/task syntax:" in s for s in res["signals"])
+
+
+def test_evaluate_scratch_notes_filename_cues():
+    res_notes = evaluate_scratch_notes("Discussion points for team.", file_name="meeting_notes.docx")
+    assert res_notes["scores"]["filename_bonus"] == 2.0
+    assert "meeting" in res_notes["evidence"]["filename_matches"] or "notes" in res_notes["evidence"]["filename_matches"]
+
+    res_draft = evaluate_scratch_notes("Early draft of chapter 1.", file_name="draft_v1.rtf")
+    assert res_draft["scores"]["filename_bonus"] == 2.0
+    assert "draft" in res_draft["evidence"]["filename_matches"]
+
+
+def test_evaluate_scratch_notes_competitor_exclusion():
+    # If a .txt or .docx contains clear tax/CRA/invoice terms, it must NOT be marked as notes
+    tax_content = """File: cra_letter.txt
+Content Snippet:
+CANADA REVENUE AGENCY
+Notice of Assessment
+Social Insurance Number: 123-456-789
+Tax year: 2025
+Net income: $75,000
+"""
+    res_tax = evaluate_scratch_notes(tax_content, file_name="cra_letter.txt")
+    assert res_tax["is_strong_candidate"] is False
+    assert res_tax["scores"]["format_prior"] == 0.0
+    assert res_tax["scores"]["competitor_penalty"] > 0
+    assert len(res_tax["evidence"]["competitor_matches"]) > 0
+
+    # Invoice
+    inv_content = """File: bill.docx
+Content Snippet:
+Invoice summary
+Invoice number: 994812
+Billing period: August 2026
+Total due: $145.20
+"""
+    res_inv = evaluate_scratch_notes(inv_content, file_name="bill.docx")
+    assert res_inv["is_strong_candidate"] is False
+    assert res_inv["scores"]["format_prior"] == 0.0
+
+
+def test_evaluate_scratch_notes_disabled():
+    cfg = ScratchNotesHeuristicsConfig(enabled=False)
+    res = evaluate_scratch_notes("meeting notes: TODO items", file_name="notes.txt", heuristics=cfg)
+    assert res["score"] == 0.0
+    assert res["is_strong_candidate"] is False
+
+
+@patch("laya.load")
+def test_classify_rescues_notes_low_confidence(mock_load):
+    mock_agent = MagicMock()
+    mock_load.return_value = mock_agent
+
+    mock_agent.predict.return_value = {
+        "answers": {
+            "category": {
+                "choice": "manuals",
+                "confidence": 0.45,
+                "probabilities": {"manuals": 0.45, "scratch_notes": 0.40},
+            },
+            "financial_type": {"choice": "general", "confidence": 0.1, "probabilities": {}},
+            "retention": {"score": 0.3, "confidence": 0.7, "probabilities": {}},
+            "is_sensitive": {"noul": 0.05, "confidence": 0.8},
+        }
+    }
+
+    classifier = DocumentClassifier(confidence_threshold=0.60)
+    prompt = """File: meeting_minutes.docx
+Content Snippet:
+Meeting notes:
+Attendees: Ivan, Dave
+Action items:
+- fix bug 404
+- deploy to staging
+"""
+    res = classifier.classify(prompt)
+    assert res["category"]["winner"] == "scratch_notes"
+    assert res["category"]["confidence"] >= 0.80
+    assert res["target_subfolder"] == "Notes & Drafts"
+    assert res["triage_action"]["action"] == "AUTO_MOVE"
+    assert res["notes_type"] is not None
+
+
+@patch("laya.load")
+def test_classify_corroborates_notes_confidence(mock_load):
+    mock_agent = MagicMock()
+    mock_load.return_value = mock_agent
+
+    mock_agent.predict.return_value = {
+        "answers": {
+            "category": {
+                "choice": "scratch_notes",
+                "confidence": 0.70,
+                "probabilities": {"scratch_notes": 0.70, "web_snapshots": 0.20},
+            },
+            "financial_type": {"choice": "general", "confidence": 0.1, "probabilities": {}},
+            "retention": {"score": 0.1, "confidence": 0.8, "probabilities": {}},
+            "is_sensitive": {"noul": 0.05, "confidence": 0.8},
+        }
+    }
+
+    classifier = DocumentClassifier(confidence_threshold=0.60)
+    prompt = """File: scratchpad_ideas.txt
+Content Snippet:
+Quick meeting notes
+- sync with Dave tomorrow 10am
+- order more coffee
+"""
+    res = classifier.classify(prompt)
+    assert res["category"]["winner"] == "scratch_notes"
+    # Corroborated confidence boosted from 0.70
+    assert res["category"]["confidence"] > 0.70
+    assert res["target_subfolder"] == "Notes & Drafts"
+    assert res["triage_action"]["action"] == "AUTO_MOVE"
+
+
+def test_evaluate_scratch_notes_commands_and_scripts():
+    prompt = """File: run categorization script.txt
+Content Snippet:
+python -m ordinale.doc_organizer --scan C:\\Users\\ivank\\Desktop --target C:\\Users\\ivank\\Desktop\\Organized_Documents
+"""
+    res = evaluate_scratch_notes(prompt, file_name="run categorization script.txt", record_signals=True)
+    assert res["is_strong_candidate"] is True
+    assert res["scores"]["commands"] == 2.0
+    assert res["scores"]["filename_bonus"] == 2.0
+    assert "script" in res["evidence"]["filename_matches"] or "run" in res["evidence"]["filename_matches"]
+    assert any("Command/script syntax:" in s for s in res["signals"])
+
+
+def test_evaluate_web_snapshots_html_and_article_headers():
+    html_prompt = """File: article.html
+Content Snippet:
+<!DOCTYPE html>
+<html>
+<body>
+<article>
+URL: https://distributed-systems.org/raft
+Published on: 2026-01-15
+8 min read
+Raft consensus algorithm provides safety under network partitions.
+</article>
+</body>
+</html>
+"""
+    web_res = evaluate_web_snapshots(html_prompt, file_name="article.html", record_signals=True)
+    assert web_res["is_html"] is True
+    assert web_res["has_web_headers"] is True
+    assert web_res["score"] >= 5.0
+    assert any("HTML web format" in s for s in web_res["signals"])
+    assert any("Web article headers:" in s for s in web_res["signals"])
+
+    # Non-web plain text penalty
+    txt_prompt = "File: notes.txt\nContent Snippet:\njust some thoughts"
+    txt_res = evaluate_web_snapshots(txt_prompt, file_name="notes.txt", record_signals=True)
+    assert txt_res["is_html"] is False
+    assert txt_res["has_web_headers"] is False
+    assert txt_res["score"] < 0
+    assert any("Plain text non-web penalty" in s for s in txt_res["signals"])
+
+
+@patch("laya.load")
+def test_classify_rescues_web_snapshots_to_scratch_notes(mock_load):
+    # Reproduces the real user trigger: 'run categorization script.txt' classified as web_snapshots with 0.1193
+    mock_agent = MagicMock()
+    mock_load.return_value = mock_agent
+
+    mock_agent.predict.return_value = {
+        "answers": {
+            "category": {
+                "choice": "web_snapshots",
+                "confidence": 0.1193,
+                "probabilities": {"web_snapshots": 0.1193, "scratch_notes": 0.1105},
+            },
+            "financial_type": {"choice": "general", "confidence": 0.1, "probabilities": {}},
+            "retention": {"score": 0.2, "confidence": 0.5, "probabilities": {}},
+            "is_sensitive": {"noul": 0.0, "confidence": 0.9},
+        }
+    }
+
+    classifier = DocumentClassifier(confidence_threshold=0.55)
+    prompt = """File: run categorization script.txt
+Content Snippet:
+python -m ordinale.doc_organizer --scan C:\\Users\\ivank\\Desktop --target C:\\Users\\ivank\\Desktop\\Organized_Documents
+"""
+    res = classifier.classify(prompt)
+    assert res["category"]["winner"] == "scratch_notes"
+    assert res["target_subfolder"] == "Notes & Drafts"
+    assert res["category"]["confidence"] >= 0.75
+    assert res["triage_action"]["action"] == "AUTO_MOVE"
+
+
+@patch("laya.load")
+def test_classify_preserves_genuine_web_snapshots(mock_load):
+    mock_agent = MagicMock()
+    mock_load.return_value = mock_agent
+
+    mock_agent.predict.return_value = {
+        "answers": {
+            "category": {
+                "choice": "web_snapshots",
+                "confidence": 0.85,
+                "probabilities": {"web_snapshots": 0.85, "scratch_notes": 0.05},
+            },
+            "financial_type": {"choice": "general", "confidence": 0.1, "probabilities": {}},
+            "retention": {"score": 0.5, "confidence": 0.8, "probabilities": {}},
+            "is_sensitive": {"noul": 0.0, "confidence": 0.9},
+        }
+    }
+
+    classifier = DocumentClassifier(confidence_threshold=0.55)
+    prompt = """File: raft_consensus.html
+Content Snippet:
+<!DOCTYPE html>
+<html>
+<body>
+<article>
+URL: https://example.com/raft
+Published on: June 2026
+In Search of an Understandable Consensus Algorithm.
+</article>
+</body>
+</html>
+"""
+    res = classifier.classify(prompt)
+    assert res["category"]["winner"] == "web_snapshots"
+    assert res["target_subfolder"] == "Web Articles & Clippings"
+    assert res["triage_action"]["action"] == "AUTO_MOVE"
